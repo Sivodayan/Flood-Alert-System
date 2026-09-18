@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FloodGuard IoT // Early Warning Administrative Panel</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- MQTT.js over WebSocket -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <!-- Google Fonts: Inter & Plus Jakarta Sans -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            display: ['Plus Jakarta Sans', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#f0fdfa',
+              100: '#ccfbf1',
+              500: '#14b8a6',
+              600: '#0d9488',
+              700: '#0f766e',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Animated Wave Styles */
+    @keyframes waveSlow {
+      0% { transform: translateX(0) translateZ(0) scaleY(1); }
+      50% { transform: translateX(-25%) translateZ(0) scaleY(1.15); }
+      100% { transform: translateX(-50%) translateZ(0) scaleY(1); }
+    }
+    @keyframes waveFast {
+      0% { transform: translateX(0) translateZ(0) scaleY(1.05); }
+      50% { transform: translateX(-35%) translateZ(0) scaleY(0.9); }
+      100% { transform: translateX(-70%) translateZ(0) scaleY(1.05); }
+    }
+    .wave-anim-1 {
+      animation: waveSlow 8s linear infinite;
+    }
+    .wave-anim-2 {
+      animation: waveFast 5s linear infinite;
+    }
+    .pulse-glow-red {
+      box-shadow: 0 0 25px rgba(239, 68, 68, 0.4);
+    }
+    .pulse-glow-amber {
+      box-shadow: 0 0 25px rgba(245, 158, 11, 0.3);
+    }
+    .pulse-glow-emerald {
+      box-shadow: 0 0 25px rgba(16, 185, 129, 0.25);
+    }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+  </style>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased selection:bg-teal-500 selection:text-black">
+
+  <!-- TOP APP NAVIGATION BAR -->
+  <header class="bg-slate-900/90 border-b border-slate-800 sticky top-0 z-40 backdrop-blur-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      
+      <!-- Brand Logo & Station Title -->
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-teal-600 to-emerald-400 flex items-center justify-center shadow-lg shadow-teal-900/40">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-display font-extrabold text-base tracking-tight text-white">FloodGuard</span>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/10 text-teal-400 border border-teal-500/30">ESP32 TELEMETRY</span>
+          </div>
+          <p class="text-xs text-slate-400 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-ping"></span>
+            Station: <span id="hdr-station-name" class="font-medium text-slate-200">Kelani River Basin #04</span>
+          </p>
+        </div>
+      </div>
+
+      <!-- Station Controls & Quick Toggles -->
+      <div class="flex items-center gap-2 sm:gap-4">
+        
+        <!-- Live Hardware Ping Badge -->
+        <div class="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-800/80 rounded-lg border border-slate-700/60 text-xs">
+          <span class="text-slate-400">Status:</span>
+          <span id="hdr-connection-status" class="text-emerald-400 font-semibold flex items-center gap-1">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span> Online (WiFi/MQTT)
+          </span>
+        </div>
+
+        <!-- Audio Sirens Mute/Arm Button -->
+        <button onclick="toggleAudioMute()" id="btn-audio-mute" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium flex items-center gap-1.5 transition">
+          <span id="audio-icon">🔊</span>
+          <span id="audio-text" class="hidden md:inline">Audio Armed</span>
+        </button>
+
+        <!-- ESP32 Simulation Scenario Selector -->
+        <div class="relative">
+          <select id="sim-scenario" onchange="switchSimulationScenario(this.value)" class="bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-slate-200 rounded-lg text-xs py-1.5 px-3 focus:outline-none focus:ring-2 focus:ring-teal-500 transition cursor-pointer">
+            <option value="MONSOON_RISE">Scenario: Heavy Monsoon Inflow</option>
+            <option value="FLASH_FLOOD">Scenario: Rapid Flash Surge</option>
+            <option value="RECEDING">Scenario: Sluice Open (Receding)</option>
+            <option value="STABLE_NORMAL">Scenario: Normal Baseline Flow</option>
+          </select>
+        </div>
+
+        <!-- Connection Settings Button -->
+        <button onclick="openConfigModal()" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition" title="ESP32 MQTT Configuration">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- MASTER ALERT TICKER & RAPID STATUS -->
+  <div id="master-status-bar" class="bg-emerald-950/60 border-b border-emerald-800/60 px-4 py-2 text-xs font-medium text-emerald-300 transition-colors duration-500">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
+      <div class="flex items-center gap-2">
+        <span id="status-pulse-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+        <span id="status-header-text" class="font-bold tracking-wide uppercase">NORMAL CONDITIONS : WATER LEVEL NOMINAL</span>
+        <span class="text-slate-400">|</span>
+        <span id="status-header-sub" class="text-slate-300 hidden sm:inline">No evacuation risk. Embankments and sluice gates operating within standard parameters.</span>
+      </div>
+      <div class="flex items-center gap-4 text-xs font-mono">
+        <div><span class="text-slate-400">EST. TIME TO CREST:</span> <span id="stat-crest-eta" class="text-white font-bold">&gt; 12 hrs</span></div>
+        <div><span class="text-slate-400">BATTERY:</span> <span id="stat-battery" class="text-emerald-400 font-bold">12.6V (LiFePO4)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN DASHBOARD CONTENT -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-grow flex flex-col gap-6 w-full">
+
+    <!-- TOP KPI METRIC CARDS (4-COLUMN GRID) -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      
+      <!-- CARD 1: WATER LEVEL -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl relative overflow-hidden flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-slate-400 tracking-wider uppercase">Stage Water Level</span>
+          <span id="card-level-badge" class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">SAFE</span>
+        </div>
+        <div class="mt-4 flex items-baseline gap-2">
+          <span id="disp-water-level" class="text-4xl font-extrabold font-display text-white tracking-tight">1.85</span>
+          <span class="text-slate-400 text-sm font-semibold">meters</span>
+        </div>
+        <div class="mt-3 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/80 pt-3">
+          <span>Threshold Freeboard:</span>
+          <span id="disp-freeboard-val" class="font-mono text-slate-200 font-semibold">3.15 m remaining</span>
+        </div>
+      </div>
+
+      <!-- CARD 2: WATER RISE RATE -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl relative overflow-hidden flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-slate-400 tracking-wider uppercase">Rate of Rise (Velocity)</span>
+          <span id="disp-rise-arrow" class="text-xs font-bold text-emerald-400 flex items-center gap-0.5">
+            <span>▲</span> Steady
+          </span>
+        </div>
+        <div class="mt-4 flex items-baseline gap-2">
+          <span id="disp-rise-rate" class="text-4xl font-extrabold font-display text-emerald-400 tracking-tight">+0.4</span>
+          <span class="text-slate-400 text-sm font-semibold">cm / min</span>
+        </div>
+        <div class="mt-3 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/80 pt-3">
+          <span>Surge Warning Trigger:</span>
+          <span class="font-mono text-amber-400 font-semibold">&gt; 3.0 cm/min</span>
+        </div>
+      </div>
+
+      <!-- CARD 3: BUZZER / ALARM STATUS -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl relative overflow-hidden flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-slate-400 tracking-wider uppercase">High-Decibel Siren</span>
+          <div class="flex items-center gap-1.5">
+            <span id="buzzer-status-dot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+            <span id="buzzer-status-text" class="text-xs font-bold text-slate-400 uppercase">Standby</span>
+          </div>
+        </div>
+        <div class="mt-4 flex items-center justify-between">
+          <div>
+            <div class="text-2xl font-bold font-display text-white" id="buzzer-relay-state">RELAY: OFF</div>
+            <div class="text-xs text-slate-400 mt-0.5">GPIO 26 • 115 dB Output</div>
+          </div>
+          <button id="btn-buzzer-override" onclick="toggleBuzzerManual()" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition shadow-sm">
+            TEST SIREN
+          </button>
+        </div>
+        <div class="mt-3 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/80 pt-3">
+          <span>Auto-Trip on Danger:</span>
+          <span class="text-emerald-400 font-semibold font-mono">ARMED (&gt; 5.0m)</span>
+        </div>
+      </div>
+
+      <!-- CARD 4: GSM SMS BROADCAST STATUS -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl relative overflow-hidden flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-slate-400 tracking-wider uppercase">GSM SMS Dispatch</span>
+          <span id="sms-badge-status" class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-500/10 text-teal-400 border border-teal-500/20">READY</span>
+        </div>
+        <div class="mt-4 flex items-baseline gap-2">
+          <span id="disp-sms-count" class="text-4xl font-extrabold font-display text-white tracking-tight">1,840</span>
+          <span class="text-slate-400 text-sm font-semibold">recipients</span>
+        </div>
+        <div class="mt-3 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/80 pt-3">
+          <span>SIM800L Cellular Signal:</span>
+          <span id="disp-gsm-csq" class="text-emerald-400 font-semibold font-mono">92% (-61 dBm)</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- MAIN GRID: CROSS SECTION VISUALIZER & HYDROGRAPH -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- LEFT: INTERACTIVE RESERVOIR CROSS-SECTION (5 COLS) -->
+      <div class="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col">
+        <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+          <div>
+            <h3 class="font-display font-bold text-base text-white">River Bed Stage Visualizer</h3>
+            <p class="text-xs text-slate-400">Ultrasonic Echo Profile (Max 6.20m Span)</p>
+          </div>
+          <span class="text-xs font-mono px-2 py-1 bg-slate-800 text-slate-300 rounded-lg border border-slate-700">Datum: MSL +12.4m</span>
+        </div>
+
+        <!-- TANK GRAPHIC CONTAINER -->
+        <div class="mt-5 relative flex-grow min-h-[360px] bg-slate-950 rounded-xl border-2 border-slate-800 overflow-hidden flex">
+          
+          <!-- Height Scale Metric Ruler -->
+          <div class="w-16 bg-slate-900/90 border-r border-slate-800 flex flex-col justify-between py-2 px-2 text-xs font-mono select-none z-20">
+            <div class="text-rose-400 font-bold flex items-center justify-between">
+              <span>6.0m</span><span class="w-2 h-0.5 bg-rose-500"></span>
+            </div>
+            <div class="text-rose-500/80 font-medium flex items-center justify-between">
+              <span>5.0m</span><span class="w-2 h-0.5 bg-rose-500/80"></span>
+            </div>
+            <div class="text-amber-400 font-medium flex items-center justify-between">
+              <span>3.5m</span><span class="w-2 h-0.5 bg-amber-400"></span>
+            </div>
+            <div class="text-slate-400 flex items-center justify-between">
+              <span>2.0m</span><span class="w-2 h-0.5 bg-slate-600"></span>
+            </div>
+            <div class="text-slate-500 flex items-center justify-between">
+              <span>1.0m</span><span class="w-2 h-0.5 bg-slate-700"></span>
+            </div>
+            <div class="text-slate-600 flex items-center justify-between">
+              <span>0.0m</span><span class="w-2 h-0.5 bg-slate-800"></span>
+            </div>
+          </div>
+
+          <!-- Cross-Section Basin with Animated Fluid Waves -->
+          <div class="relative flex-grow h-full flex flex-col justify-end overflow-hidden bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900">
+            
+            <!-- Horizontal Threshold Markers -->
+            <!-- Critical Threshold (5.0m = ~80.6%) -->
+            <div class="absolute w-full top-[19.3%] border-b-2 border-dashed border-rose-500/80 z-20 flex justify-end pr-2">
+              <span class="text-[10px] font-mono font-bold text-rose-400 bg-rose-950/80 px-2 py-0.5 rounded border border-rose-800">
+                CRITICAL EVACUATION (5.0m)
+              </span>
+            </div>
+
+            <!-- Alert Threshold (3.5m = ~56.4%) -->
+            <div class="absolute w-full top-[43.5%] border-b-2 border-dashed border-amber-500/80 z-20 flex justify-end pr-2">
+              <span class="text-[10px] font-mono font-bold text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-800">
+                ALERT LEVEL (3.5m)
+              </span>
+            </div>
+
+            <!-- Animated Fluid Column Body -->
+            <div id="tank-water-body" class="w-full relative transition-all duration-700 ease-out" style="height: 29.8%;">
+              
+              <!-- SVG Wave Layer 1 (Front) -->
+              <div class="absolute -top-7 left-0 right-0 w-[200%] h-8 overflow-hidden z-10 opacity-75">
+                <svg class="w-full h-full wave-anim-1 fill-cyan-500/60" viewBox="0 0 1200 120" preserveAspectRatio="none">
+                  <path d="M0,0 C150,90 350,-40 500,50 C650,140 900,-20 1200,40 L1200,120 L0,120 Z"></path>
+                </svg>
+              </div>
+
+              <!-- SVG Wave Layer 2 (Back) -->
+              <div class="absolute -top-9 left-0 right-0 w-[200%] h-10 overflow-hidden z-0 opacity-45">
+                <svg class="w-full h-full wave-anim-2 fill-blue-600/70" viewBox="0 0 1200 120" preserveAspectRatio="none">
+                  <path d="M0,0 C200,70 450,-30 600,40 C800,120 1000,-10 1200,50 L1200,120 L0,120 Z"></path>
+                </svg>
+              </div>
+
+              <!-- Fluid Deep Gradient -->
+              <div id="tank-gradient-body" class="w-full h-full bg-gradient-to-t from-blue-900/90 via-cyan-800/80 to-cyan-600/70 border-t border-cyan-300/40 relative">
+                <!-- Floating Bubble / Grid FX -->
+                <div class="absolute inset-0 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:16px_16px] opacity-25"></div>
+              </div>
+
+            </div>
+
+            <!-- Ultrasonic Beam Sensor Line -->
+            <div class="absolute top-0 inset-x-0 bottom-0 pointer-events-none flex justify-center z-10">
+              <div class="w-0.5 bg-yellow-400/40 border-dashed border-l border-yellow-300/50"></div>
+            </div>
+
+          </div>
+
+        </div>
+
+        <!-- Manual Quick Adjust Controls for Simulation -->
+        <div class="mt-4 pt-4 border-t border-slate-800 flex items-center justify-between">
+          <span class="text-xs text-slate-400">Interactive Level Override:</span>
+          <div class="flex items-center gap-1.5">
+            <button onclick="adjustSimulatedWaterLevel(-0.5)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700">-0.5m</button>
+            <button onclick="adjustSimulatedWaterLevel(+0.5)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700">+0.5m</button>
+            <button onclick="adjustSimulatedWaterLevel(+1.5)" class="px-2.5 py-1 bg-rose-950/60 hover:bg-rose-900 text-rose-300 text-xs font-semibold rounded-lg border border-rose-800">+1.5m Flash</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- RIGHT: LIVE CHART & LOG TERMINALS (7 COLS) -->
+      <div class="lg:col-span-7 flex flex-col gap-6">
+
+        <!-- REALTIME HYDROGRAPH TELEMETRY CHART -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col flex-grow">
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-4 border-b border-slate-800">
+            <div>
+              <h3 class="font-display font-bold text-base text-white">Live Hydrometric Trend (Hydrograph)</h3>
+              <p class="text-xs text-slate-400">Continuous 1.0 Hz ESP32 Sampling Stream</p>
+            </div>
+            <div class="flex items-center gap-4 text-xs font-medium">
+              <span class="flex items-center gap-1.5 text-cyan-400"><span class="w-2.5 h-0.5 bg-cyan-400 rounded-full inline-block"></span> Level (m)</span>
+              <span class="flex items-center gap-1.5 text-amber-400"><span class="w-2.5 h-0.5 bg-amber-400 rounded-full inline-block"></span> Alert (3.5m)</span>
+              <span class="flex items-center gap-1.5 text-rose-400"><span class="w-2.5 h-0.5 bg-rose-400 rounded-full inline-block"></span> Danger (5.0m)</span>
+            </div>
+          </div>
+
+          <div class="mt-4 flex-grow min-h-[220px] relative">
+            <canvas id="liveHydroChart"></canvas>
+          </div>
+        </div>
+
+        <!-- LOWER DUAL CARDS: SMS BROADCASTER & MQTT TERMINAL -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          
+          <!-- SMS EMERGENCY DISPATCH CONTROL -->
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between">
+                <h4 class="text-xs font-bold uppercase tracking-wider text-slate-300">GSM Broadcast Console</h4>
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+              </div>
+              <p class="text-xs text-slate-400 mt-1">Automatic cellular broadcast triggered on critical alert state.</p>
+              
+              <div class="mt-3 space-y-2 text-xs">
+                <div class="flex justify-between text-slate-300 bg-slate-950 p-2 rounded-lg border border-slate-800/80">
+                  <span class="text-slate-400">Registered Callout Lists:</span>
+                  <span class="font-bold text-slate-200">3 Sectors Active</span>
+                </div>
+                <div class="flex justify-between text-slate-300 bg-slate-950 p-2 rounded-lg border border-slate-800/80">
+                  <span class="text-slate-400">Pending Queue:</span>
+                  <span id="stat-queue-count" class="font-mono text-emerald-400 font-bold">0 Pending</span>
+                </div>
+              </div>
+            </div>
+
+            <button onclick="triggerManualSmsBroadcast()" class="mt-3 w-full py-2 px-3 rounded-xl bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white text-xs font-bold tracking-wide transition shadow-lg shadow-rose-950/40">
+              DISPATCH TEST EVACUATION SMS
+            </button>
+          </div>
+
+          <!-- ESP32 HARDWARE MQTT TERMINAL & LOGS -->
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col justify-between">
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="text-xs font-bold uppercase tracking-wider text-slate-300">ESP32 Telemetry Terminal</h4>
+              <button onclick="clearConsoleLog()" class="text-[10px] text-slate-400 hover:text-slate-200 underline">Clear</button>
+            </div>
+
+            <!-- Terminal Output Window -->
+            <div id="telemetry-terminal" class="bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-[11px] text-slate-300 h-32 overflow-y-auto space-y-1 select-text">
+              <div class="text-slate-500">[INIT] ESP32-WROOM-32 booting...</div>
+              <div class="text-slate-500">[WIFI] Connected to AP (RSSI: -54 dBm)</div>
+              <div class="text-emerald-400">[MQTT] Broker subscribed: hydro/stn04/telemetry</div>
+              <div class="text-cyan-400">[TELEMETRY] L: 1.85m | dY: +0.4cm/m | BUZZER: 0</div>
+            </div>
+
+            <div class="mt-2 flex items-center justify-between text-[10px] text-slate-500 font-mono">
+              <span>Baud: 115200</span>
+              <span id="terminal-packet-counter">Packets Received: 28</span>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- MQTT & HARDWARE CONFIGURATION MODAL -->
+  <div id="config-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+        <h3 class="font-display font-bold text-lg text-white">ESP32 Hardware & MQTT Connection</h3>
+        <button onclick="closeConfigModal()" class="text-slate-400 hover:text-white font-bold p-1">✕</button>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        <div>
+          <label class="block font-medium text-slate-300 mb-1">WebSocket MQTT Broker URL:</label>
+          <input id="cfg-broker-url" type="text" value="wss://broker.emqx.io:8084/mqtt" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 focus:ring-2 focus:ring-teal-500 outline-none font-mono">
+          <p class="text-[10px] text-slate-500 mt-1">Accepts any public/private broker with WebSocket TLS support (EMQX, HiveMQ, Mosquitto).</p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-medium text-slate-300 mb-1">Telemetry Sub Topic:</label>
+            <input id="cfg-sub-topic" type="text" value="hydro/stn04/telemetry" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 focus:ring-2 focus:ring-teal-500 outline-none font-mono">
+          </div>
+          <div>
+            <label class="block font-medium text-slate-300 mb-1">Command Pub Topic:</label>
+            <input id="cfg-pub-topic" type="text" value="hydro/stn04/commands" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 focus:ring-2 focus:ring-teal-500 outline-none font-mono">
+          </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-3">
+          <h4 class="font-bold text-slate-300 mb-2">Custom Flood Alert Thresholds</h4>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-slate-400 mb-1">Alert Mark (m):</label>
+              <input id="cfg-thresh-alert" type="number" step="0.1" value="3.5" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-amber-400 focus:ring-2 focus:ring-teal-500 outline-none font-mono">
+            </div>
+            <div>
+              <label class="block text-slate-400 mb-1">Critical Danger Mark (m):</label>
+              <input id="cfg-thresh-crit" type="number" step="0.1" value="5.0" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-rose-400 focus:ring-2 focus:ring-teal-500 outline-none font-mono">
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono text-[10px] text-slate-400">
+          <strong class="text-teal-400">ESP32 Sample JSON Payload:</strong><br>
+          {"station_id":"STN-04","water_level_m":2.15,"rise_rate_cm_min":0.3,"buzzer":false,"sms_status":"IDLE"}
+        </div>
+      </div>
+
+      <div class="mt-6 flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+        <button onclick="closeConfigModal()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">Cancel</button>
+        <button onclick="applyConfiguration()" class="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold shadow-lg shadow-teal-900/30">Connect & Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- APPLICATION LOGIC SCRIPT -->
+  <script>
+    /* =========================================================
+       CORE STATE & CONFIGURATION
+       ========================================================= */
+    const appState = {
+      waterLevel: 1.85,
+      maxScaleMeters: 6.20,
+      alertThreshold: 3.50,
+      dangerThreshold: 5.00,
+      riseRateCmMin: 0.40,
+      lastLevel: 1.85,
+      lastTime: Date.now(),
+      buzzerActive: false,
+      buzzerManualOverride: false,
+      audioMuted: false,
+      smsStatus: 'READY',
+      smsRecipients: 1840,
+      scenario: 'MONSOON_RISE',
+      packetCount: 28,
+      mqttClient: null,
+      mqttConnected: false,
+      chart: null,
+    };
+
+    // Web Audio Synthesizer for Buzzer Siren
+    let audioCtx = null;
+    let sirenOsc = null;
+    let sirenGain = null;
+    let sirenTimer = null;
+
+    function initAudio() {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    function toggleAudioMute() {
+      appState.audioMuted = !appState.audioMuted;
+      const text = document.getElementById('audio-text');
+      const icon = document.getElementById('audio-icon');
+
+      if (appState.audioMuted) {
+        text.innerText = 'Audio Muted';
+        icon.innerText = '🔇';
+        stopSirenTone();
+      } else {
+        text.innerText = 'Audio Armed';
+        icon.innerText = '🔊';
+        initAudio();
+        if (appState.buzzerActive) {
+          startSirenTone();
+        }
+      }
+    }
+
+    function startSirenTone() {
+      if (appState.audioMuted) return;
+      initAudio();
+      stopSirenTone();
+
+      sirenOsc = audioCtx.createOscillator();
+      sirenGain = audioCtx.createGain();
+
+      sirenOsc.type = 'sawtooth';
+      sirenOsc.frequency.setValueAtTime(800, audioCtx.currentTime);
+      sirenGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+
+      sirenOsc.connect(sirenGain);
+      sirenGain.connect(audioCtx.destination);
+      sirenOsc.start();
+
+      let toggle = false;
+      sirenTimer = setInterval(() => {
+        if (!sirenOsc || !sirenGain) return;
+        toggle = !toggle;
+        sirenOsc.frequency.setValueAtTime(toggle ? 1150 : 700, audioCtx.currentTime);
+      }, 400);
+    }
+
+    function stopSirenTone() {
+      if (sirenTimer) {
+        clearInterval(sirenTimer);
+        sirenTimer = null;
+      }
+      if (sirenOsc) {
+        try {
+          sirenOsc.stop();
+          sirenOsc.disconnect();
+        } catch(e) {}
+        sirenOsc = null;
+      }
+    }
+
+    /* =========================================================
+       TELEMETRY UPDATER & CALCULATIONS
+       ========================================================= */
+    function updateTelemetry(newLevel) {
+      const now = Date.now();
+      const elapsedMinutes = (now - appState.lastTime) / 60000;
+
+      if (elapsedMinutes >= 0.02) {
+        const deltaCm = (newLevel - appState.lastLevel) * 100;
+        const instantRate = deltaCm / elapsedMinutes;
+        
+        // Exponential moving average filter
+        appState.riseRateCmMin = +(0.7 * appState.riseRateCmMin + 0.3 * instantRate).toFixed(2);
+        appState.lastLevel = newLevel;
+        appState.lastTime = now;
+      }
+
+      appState.waterLevel = +Math.max(0.1, Math.min(appState.maxScaleMeters, newLevel)).toFixed(2);
+      appState.packetCount++;
+
+      // Auto Siren Safety Trip
+      if (!appState.buzzerManualOverride) {
+        if (appState.waterLevel >= appState.dangerThreshold && !appState.buzzerActive) {
+          setBuzzerState(true, 'AUTOMATIC TRIP: Level >= 5.0m Danger Threshold');
+        } else if (appState.waterLevel < appState.dangerThreshold && appState.buzzerActive) {
+          setBuzzerState(false, 'NORMALIZED: Level < 5.0m');
+        }
+      }
+
+      renderUI();
+      appendChartPoint(appState.waterLevel);
+    }
+
+    function renderUI() {
+      // 1. Digital Water Level Readouts
+      document.getElementById('disp-water-level').innerText = appState.waterLevel.toFixed(2);
+      const freeboard = Math.max(0, appState.maxScaleMeters - appState.waterLevel).toFixed(2);
+      document.getElementById('disp-freeboard-val').innerText = `${freeboard} m remaining`;
+
+      // 2. Animated Tank Column Height
+      const percent = Math.min(100, Math.max(5, (appState.waterLevel / appState.maxScaleMeters) * 100));
+      document.getElementById('tank-water-body').style.height = `${percent.toFixed(1)}%`;
+
+      // 3. Status Level Categorization
+      const masterBar = document.getElementById('master-status-bar');
+      const dot = document.getElementById('status-pulse-dot');
+      const headText = document.getElementById('status-header-text');
+      const headSub = document.getElementById('status-header-sub');
+      const badge = document.getElementById('card-level-badge');
+      const tankGradient = document.getElementById('tank-gradient-body');
+
+      if (appState.waterLevel >= appState.dangerThreshold) {
+        masterBar.className = 'bg-rose-950/80 border-b border-rose-700/80 px-4 py-2 text-xs font-medium text-rose-200 transition-colors duration-500 pulse-glow-red';
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping';
+        headText.innerText = 'CRITICAL DANGER : FLOOD SPILLWAY BREACH IMMINENT';
+        headSub.innerText = 'High decibel evacuations active. Mobile relief and rescue personnel dispatched.';
+        badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/40';
+        badge.innerText = 'CRITICAL';
+        tankGradient.className = 'w-full h-full bg-gradient-to-t from-rose-950 via-rose-800/80 to-rose-600/70 border-t border-rose-300/40 relative';
+      } else if (appState.waterLevel >= appState.alertThreshold) {
+        masterBar.className = 'bg-amber-950/80 border-b border-amber-700/80 px-4 py-2 text-xs font-medium text-amber-200 transition-colors duration-500 pulse-glow-amber';
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping';
+        headText.innerText = 'WARNING ALERT : RIVER STAGE EXCEEDING SAFE EMBANKMENT';
+        headSub.innerText = 'Low lying flood plain areas placed on standby alert. Sluice discharge monitored.';
+        badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40';
+        badge.innerText = 'ALERT';
+        tankGradient.className = 'w-full h-full bg-gradient-to-t from-amber-950 via-amber-800/80 to-amber-600/70 border-t border-amber-300/40 relative';
+      } else {
+        masterBar.className = 'bg-emerald-950/60 border-b border-emerald-800/60 px-4 py-2 text-xs font-medium text-emerald-300 transition-colors duration-500';
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping';
+        headText.innerText = 'NORMAL CONDITIONS : WATER LEVEL NOMINAL';
+        headSub.innerText = 'No evacuation risk. Embankments and sluice gates operating within standard parameters.';
+        badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+        badge.innerText = 'SAFE';
+        tankGradient.className = 'w-full h-full bg-gradient-to-t from-blue-900/90 via-cyan-800/80 to-cyan-600/70 border-t border-cyan-300/40 relative';
+      }
+
+      // 4. Rate of Rise
+      const rateEl = document.getElementById('disp-rise-rate');
+      const arrowEl = document.getElementById('disp-rise-arrow');
+      const sign = appState.riseRateCmMin >= 0 ? '+' : '';
+      rateEl.innerText = `${sign}${appState.riseRateCmMin.toFixed(1)}`;
+
+      if (appState.riseRateCmMin >= 2.5) {
+        arrowEl.className = 'text-xs font-bold text-rose-400 flex items-center gap-0.5 animate-bounce';
+        arrowEl.innerHTML = '<span>▲▲</span> SURGE';
+        rateEl.className = 'text-4xl font-extrabold font-display text-rose-400 tracking-tight';
+      } else if (appState.riseRateCmMin >= 0.8) {
+        arrowEl.className = 'text-xs font-bold text-amber-400 flex items-center gap-0.5';
+        arrowEl.innerHTML = '<span>▲</span> Rising';
+        rateEl.className = 'text-4xl font-extrabold font-display text-amber-400 tracking-tight';
+      } else if (appState.riseRateCmMin <= -0.4) {
+        arrowEl.className = 'text-xs font-bold text-cyan-400 flex items-center gap-0.5';
+        arrowEl.innerHTML = '<span>▼</span> Receding';
+        rateEl.className = 'text-4xl font-extrabold font-display text-cyan-400 tracking-tight';
+      } else {
+        arrowEl.className = 'text-xs font-bold text-emerald-400 flex items-center gap-0.5';
+        arrowEl.innerHTML = '<span>•</span> Steady';
+        rateEl.className = 'text-4xl font-extrabold font-display text-emerald-400 tracking-tight';
+      }
+
+      // 5. Estimated Time to Spillway Crest
+      if (appState.waterLevel >= appState.dangerThreshold) {
+        document.getElementById('stat-crest-eta').innerText = 'BREACH REACHED';
+      } else if (appState.riseRateCmMin > 0.2) {
+        const remainingCm = (appState.dangerThreshold - appState.waterLevel) * 100;
+        const minutes = Math.round(remainingCm / appState.riseRateCmMin);
+        if (minutes < 60) {
+          document.getElementById('stat-crest-eta').innerText = `${minutes} mins`;
+        } else {
+          document.getElementById('stat-crest-eta').innerText = `${(minutes / 60).toFixed(1)} hrs`;
+        }
+      } else {
+        document.getElementById('stat-crest-eta').innerText = '> 14 hrs';
+      }
+
+      // 6. Packet Counter
+      document.getElementById('terminal-packet-counter').innerText = `Packets Received: ${appState.packetCount}`;
+    }
+
+    /* =========================================================
+       BUZZER & SIREN CONTROL
+       ========================================================= */
+    function setBuzzerState(active, reason = '') {
+      appState.buzzerActive = active;
+      const dot = document.getElementById('buzzer-status-dot');
+      const text = document.getElementById('buzzer-status-text');
+      const relay = document.getElementById('buzzer-relay-state');
+      const btn = document.getElementById('btn-buzzer-override');
+
+      if (active) {
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping';
+        text.className = 'text-xs font-bold text-rose-400 uppercase';
+        text.innerText = 'SIREN ACTIVE';
+        relay.innerText = 'RELAY: ON';
+        relay.className = 'text-2xl font-bold font-display text-rose-400';
+        btn.innerText = 'SILENCE SIREN';
+        btn.className = 'px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition shadow-md shadow-rose-950/50';
+
+        startSirenTone();
+        appendTerminalLog(`[GPIO 26] Buzzer Relay TRIGGERED: ${reason}`, 'text-rose-400 font-bold');
+      } else {
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-slate-500';
+        text.className = 'text-xs font-bold text-slate-400 uppercase';
+        text.innerText = 'STANDBY';
+        relay.innerText = 'RELAY: OFF';
+        relay.className = 'text-2xl font-bold font-display text-white';
+        btn.innerText = 'TEST SIREN';
+        btn.className = 'px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition shadow-sm';
+
+        stopSirenTone();
+        appendTerminalLog(`[GPIO 26] Buzzer Relay DISARMED: ${reason}`, 'text-slate-400');
+      }
+
+      // MQTT Publish if connected
+      if (appState.mqttClient && appState.mqttConnected) {
+        const topic = document.getElementById('cfg-pub-topic').value;
+        appState.mqttClient.publish(topic, JSON.stringify({
+          command: 'SET_BUZZER',
+          relay: 26,
+          state: active ? 1 : 0
+        }));
+      }
+    }
+
+    function toggleBuzzerManual() {
+      appState.buzzerManualOverride = true;
+      setBuzzerState(!appState.buzzerActive, 'Manual Operator Override Click');
+    }
+
+    /* =========================================================
+       SMS DISPATCH SIMULATOR
+       ========================================================= */
+    function triggerManualSmsBroadcast() {
+      const badge = document.getElementById('sms-badge-status');
+      const queue = document.getElementById('stat-queue-count');
+
+      badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse';
+      badge.innerText = 'BROADCASTING';
+      queue.innerText = '1,840 Queued';
+      queue.className = 'font-mono text-amber-400 font-bold';
+
+      appendTerminalLog(`[GSM SIM800L] Initiating AT+CMGS broadcast to 1,840 subscribers...`, 'text-amber-300 font-semibold');
+
+      setTimeout(() => {
+        badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-500/10 text-teal-400 border border-teal-500/20';
+        badge.innerText = 'DELIVERED (100%)';
+        queue.innerText = '0 Pending';
+        queue.className = 'font-mono text-emerald-400 font-bold';
+        appendTerminalLog(`[GSM SIM800L] Broadcast ACK: 1840/1840 messages delivered to cell carriers.`, 'text-emerald-400 font-semibold');
+      }, 2500);
+    }
+
+    /* =========================================================
+       HYDROGRAPH CHART (Chart.js)
+       ========================================================= */
+    function initChart() {
+      const ctx = document.getElementById('liveHydroChart').getContext('2d');
+      const initialLabels = [];
+      const initialData = [];
+      const alertLine = [];
+      const dangerLine = [];
+      const now = Date.now();
+
+      for (let i = 24; i >= 0; i--) {
+        const time = new Date(now - i * 10000);
+        initialLabels.push(time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+        initialData.push(+(1.75 + Math.sin(i * 0.25) * 0.2).toFixed(2));
+        alertLine.push(appState.alertThreshold);
+        dangerLine.push(appState.dangerThreshold);
+      }
+
+      appState.chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: initialLabels,
+          datasets: [
+            {
+              label: 'Water Stage (m)',
+              data: initialData,
+              borderColor: '#22d3ee',
+              backgroundColor: 'rgba(34, 211, 238, 0.12)',
+              borderWidth: 2.5,
+              tension: 0.35,
+              fill: true,
+              pointRadius: 2,
+              pointHoverRadius: 5,
+              pointBackgroundColor: '#22d3ee'
+            },
+            {
+              label: 'Alert Threshold (3.5m)',
+              data: alertLine,
+              borderColor: 'rgba(251, 191, 36, 0.75)',
+              borderWidth: 1.5,
+              borderDash: [6, 4],
+              pointRadius: 0,
+              fill: false
+            },
+            {
+              label: 'Critical Threshold (5.0m)',
+              data: dangerLine,
+              borderColor: 'rgba(244, 63, 94, 0.85)',
+              borderWidth: 2,
+              borderDash: [4, 4],
+              pointRadius: 0,
+              fill: false
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          scales: {
+            y: {
+              min: 0,
+              max: 6.2,
+              grid: { color: 'rgba(255, 255, 255, 0.06)' },
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'JetBrains Mono', size: 10 },
+                callback: (v) => `${v.toFixed(1)}m`
+              }
+            },
+            x: {
+              grid: { color: 'rgba(255, 255, 255, 0.03)' },
+              ticks: {
+                color: '#64748b',
+                font: { family: 'JetBrains Mono', size: 9 },
+                maxTicksLimit: 7
+              }
+            }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: '#0f172a',
+              borderColor: '#334155',
+              borderWidth: 1,
+              titleFont: { family: 'JetBrains Mono', size: 11 },
+              bodyFont: { family: 'JetBrains Mono', size: 11 }
+            }
+          }
+        }
+      });
+    }
+
+    function appendChartPoint(level) {
+      if (!appState.chart) return;
+      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+      appState.chart.data.labels.push(timeStr);
+      appState.chart.data.datasets[0].data.push(level);
+      appState.chart.data.datasets[1].data.push(appState.alertThreshold);
+      appState.chart.data.datasets[2].data.push(appState.dangerThreshold);
+
+      if (appState.chart.data.labels.length > 30) {
+        appState.chart.data.labels.shift();
+        appState.chart.data.datasets[0].data.shift();
+        appState.chart.data.datasets[1].data.shift();
+        appState.chart.data.datasets[2].data.shift();
+      }
+
+      appState.chart.update();
+    }
+
+    /* =========================================================
+       TERMINAL LOGGING
+       ========================================================= */
+    function appendTerminalLog(msg, customClass = 'text-slate-300') {
+      const term = document.getElementById('telemetry-terminal');
+      const time = new Date().toTimeString().split(' ')[0];
+      const line = document.createElement('div');
+      line.className = customClass;
+      line.innerHTML = `<span class="text-slate-600">[${time}]</span> ${msg}`;
+      term.appendChild(line);
+      term.scrollTop = term.scrollHeight;
+    }
+
+    function clearConsoleLog() {
+      document.getElementById('telemetry-terminal').innerHTML = '<div class="text-slate-500">-- LOG FLUSHED --</div>';
+    }
+
+    /* =========================================================
+       SIMULATION & QUICK ADJUSTMENTS
+       ========================================================= */
+    function adjustSimulatedWaterLevel(delta) {
+      updateTelemetry(appState.waterLevel + delta);
+      appendTerminalLog(`[SIMULATOR] Manual delta ${delta > 0 ? '+' : ''}${delta}m applied.`, 'text-teal-300 font-semibold');
+    }
+
+    function switchSimulationScenario(val) {
+      appState.scenario = val;
+      appendTerminalLog(`[SIMULATOR] Swapped active meteorological scenario to: ${val}`, 'text-amber-400 font-bold');
+    }
+
+    function simulationStep() {
+      let stepDelta = 0;
+      switch (appState.scenario) {
+        case 'MONSOON_RISE':
+          // Steady positive rise with minor natural turbulence
+          stepDelta = 0.02 + (Math.random() * 0.015);
+          break;
+        case 'FLASH_FLOOD':
+          // Rapid flash flooding
+          stepDelta = 0.065 + (Math.random() * 0.035);
+          break;
+        case 'RECEDING':
+          // Sluice gate discharge
+          stepDelta = -0.04 - (Math.random() * 0.02);
+          break;
+        case 'STABLE_NORMAL':
+        default:
+          stepDelta = (Math.random() - 0.5) * 0.012;
+          break;
+      }
+
+      updateTelemetry(appState.waterLevel + stepDelta);
+    }
+
+    /* =========================================================
+       MODAL & MQTT BROKER CONFIGURATION
+       ========================================================= */
+    function openConfigModal() {
+      const modal = document.getElementById('config-modal');
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+    }
+
+    function closeConfigModal() {
+      const modal = document.getElementById('config-modal');
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    }
+
+    function applyConfiguration() {
+      const brokerUrl = document.getElementById('cfg-broker-url').value;
+      const subTopic = document.getElementById('cfg-sub-topic').value;
+      appState.alertThreshold = parseFloat(document.getElementById('cfg-thresh-alert').value) || 3.5;
+      appState.dangerThreshold = parseFloat(document.getElementById('cfg-thresh-crit').value) || 5.0;
+
+      closeConfigModal();
+      appendTerminalLog(`[MQTT] Connecting to WebSocket broker: ${brokerUrl}...`, 'text-teal-400 font-semibold');
+
+      try {
+        if (appState.mqttClient) {
+          appState.mqttClient.end();
+        }
+
+        appState.mqttClient = mqtt.connect(brokerUrl, {
+          clientId: 'FloodGuard_Client_' + Math.random().toString(16).substr(2, 6),
+          clean: true,
+          connectTimeout: 4000
+        });
+
+        appState.mqttClient.on('connect', () => {
+          appState.mqttConnected = true;
+          document.getElementById('hdr-connection-status').innerHTML = `
+            <span class="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span> Connected (Live MQTT)
+          `;
+          appendTerminalLog(`[MQTT] Subscribed to topic: ${subTopic}`, 'text-emerald-400 font-bold');
+          appState.mqttClient.subscribe(subTopic);
+        });
+
+        appState.mqttClient.on('message', (topic, message) => {
+          try {
+            const data = JSON.parse(message.toString());
+            if (data.water_level_m !== undefined) {
+              updateTelemetry(parseFloat(data.water_level_m));
+            }
+            if (data.buzzer !== undefined) {
+              setBuzzerState(Boolean(data.buzzer), 'ESP32 Telemetry Status');
+            }
+            appendTerminalLog(`[ESP32 RX] Level: ${data.water_level_m}m | Rate: ${data.rise_rate_cm_min}cm/m`, 'text-cyan-300');
+          } catch(err) {
+            console.error('JSON Parse error', err);
+          }
+        });
+
+        appState.mqttClient.on('error', (err) => {
+          appendTerminalLog(`[MQTT ERROR] ${err.message}`, 'text-rose-400 font-bold');
+        });
+
+      } catch(e) {
+        appendTerminalLog(`[MQTT FAILED] ${e.message}`, 'text-rose-400');
+      }
+    }
+
+    /* =========================================================
+       INITIALIZATION HOOK
+       ========================================================= */
+    window.addEventListener('DOMContentLoaded', () => {
+      initChart();
+      renderUI();
+
+      // Periodic simulation loop (1.5s interval)
+      setInterval(() => {
+        if (!appState.mqttConnected) {
+          simulationStep();
+        }
+      }, 1500);
+    });
+  </script>
+</body>
+</html>
