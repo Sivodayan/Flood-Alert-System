@@ -3,474 +3,859 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💧</text></svg>">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='6' y='2' width='9' height='28' rx='1.5' fill='%23e4eae6'/%3E%3Cpath d='M6 8h5M6 13h3M6 18h5M6 23h3' stroke='%23172023' stroke-width='1.6'/%3E%3Cpath d='M2 19c2.6-2.4 4.6-2.4 7.2 0s4.6 2.4 7.2 0 4.6-2.4 7.2 0 4.6 2.4 6.2 1' fill='none' stroke='%2379b6b0' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
   <title>Early Warning Administrative Panel</title>
-  <!-- Tailwind CSS CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Chart.js CDN -->
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <!-- MQTT.js over WebSocket -->
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
-  <!-- Google Fonts: Inter & Plus Jakarta Sans -->
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
-
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['Geist', 'system-ui', 'sans-serif'],
-            display: ['Syne', 'sans-serif'],
-            mono: ['Fira Code', 'monospace'],
-          },
-          colors: {
-            brand: {
-              50: '#f0fdfa',
-              100: '#ccfbf1',
-              500: '#14b8a6',
-              600: '#0d9488',
-              700: '#0f766e',
-            },
-          },
-        },
-      },
-    };
-  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <style>
-    /* Animated Wave Styles */
-    @keyframes waveSlow {
-      0% { transform: translateX(0) translateZ(0) scaleY(1); }
-      50% { transform: translateX(-25%) translateZ(0) scaleY(1.15); }
-      100% { transform: translateX(-50%) translateZ(0) scaleY(1); }
+    /* ==========================================================
+       Tokens
+       ========================================================== */
+    :root {
+      --ground:   #171d20;
+      --panel:    #1e2629;
+      --panel-hi: #263135;
+      --sunk:     #131819;
+      --rule:     #2f3b3f;
+      --rule-hi:  #465559;
+
+      --ink:      #e3e8e4;
+      --ink-2:    #aab6b2;
+      --ink-3:    #8a9a9d;
+
+      --board:    #e4eae6;
+      --board-ink:#172023;
+
+      --ok:       #8cc07a;
+      --warn:     #e5aa33;
+      --crit:     #f0603f;
+      --link:     #7ab8b2;
+
+      --f-display: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+      --f-body:    'Source Sans 3', 'Segoe UI', system-ui, sans-serif;
+      --f-mono:    'IBM Plex Mono', ui-monospace, Menlo, monospace;
+
+      /* state-driven (safe by default) */
+      --state:      var(--ok);
+      --state-bg:   #1a2a25;
+      --state-rule: #2f4b3f;
+      --w-fill:     #2b5e63;
+      --w-top:      #79b6b0;
     }
-    @keyframes waveFast {
-      0% { transform: translateX(0) translateZ(0) scaleY(1.05); }
-      50% { transform: translateX(-35%) translateZ(0) scaleY(0.9); }
-      100% { transform: translateX(-70%) translateZ(0) scaleY(1.05); }
+    body[data-level="alert"] {
+      --state: var(--warn);
+      --state-bg: #2b2716;
+      --state-rule: #5a4a1c;
+      --w-fill: #6a4f16;
+      --w-top: #e5aa33;
     }
-    .wave-anim-1 {
-      animation: waveSlow 8s linear infinite;
+    body[data-level="critical"] {
+      --state: var(--crit);
+      --state-bg: #301c18;
+      --state-rule: #6b2f24;
+      --w-fill: #6e2a1d;
+      --w-top: #f0603f;
     }
-    .wave-anim-2 {
-      animation: waveFast 5s linear infinite;
+
+    /* ==========================================================
+       Base
+       ========================================================== */
+    *, *::before, *::after { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--ground);
+      color: var(--ink);
+      font: 400 15px/1.5 var(--f-body);
+      font-variant-numeric: tabular-nums lining-nums;
+      -webkit-font-smoothing: antialiased;
     }
-    .pulse-glow-red {
-      box-shadow: 0 0 25px rgba(239, 68, 68, 0.4);
+    button, input, select { font: inherit; color: inherit; }
+    h2, h3, h4, p, dl, dd { margin: 0; }
+    ::selection { background: var(--link); color: var(--board-ink); }
+    :focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--rule-hi); border-radius: 4px; }
+
+    .wrap { width: 100%; max-width: 1280px; margin: 0 auto; padding-left: 24px; padding-right: 24px; }
+
+    .dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      flex: none;
     }
-    .pulse-glow-amber {
-      box-shadow: 0 0 25px rgba(245, 158, 11, 0.3);
+    .dot.live { animation: blink 2.6s ease-in-out infinite; }
+    @keyframes blink { 50% { opacity: .3; } }
+
+    /* ==========================================================
+       Buttons and fields
+       ========================================================== */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 13px;
+      font: 500 14px/1 var(--f-body);
+      color: var(--ink-2);
+      background: transparent;
+      border: 1px solid var(--rule-hi);
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background .15s, color .15s, border-color .15s;
     }
-    .pulse-glow-emerald {
-      box-shadow: 0 0 25px rgba(16, 185, 129, 0.25);
+    .btn:hover { background: var(--panel-hi); color: var(--ink); }
+    .btn-icon { padding: 8px; }
+
+    select.btn {
+      appearance: none;
+      -webkit-appearance: none;
+      padding-right: 30px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23aab6b2' stroke-width='1.5'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 11px center;
     }
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: #0f172a; }
-    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 9999px; }
-    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    select.btn option { background: var(--panel); color: var(--ink); }
+
+    /* ==========================================================
+       Top bar
+       ========================================================== */
+    .topbar {
+      position: sticky; top: 0; z-index: 40;
+      background: var(--ground);
+      border-bottom: 1px solid var(--rule);
+    }
+    .topbar-inner {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 12px 20px;
+      min-height: 64px;
+      padding-top: 10px; padding-bottom: 10px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-mark { width: 34px; height: 34px; flex: none; }
+    .brand-mark .board { fill: var(--board); }
+    .brand-mark .ticks { stroke: var(--board-ink); stroke-width: 1.6; fill: none; }
+    .brand-mark .wave  { stroke: var(--w-top); stroke-width: 2.6; fill: none; stroke-linecap: round; transition: stroke .5s; }
+    .brand-name { font: 600 27px/1 var(--f-display); letter-spacing: .01em; }
+    .brand-tag {
+      margin-left: 10px;
+      font: 500 12.5px/1 var(--f-body);
+      color: var(--ink-3);
+      border: 1px solid var(--rule-hi);
+      padding: 3px 7px;
+      border-radius: 2px;
+      vertical-align: 3px;
+    }
+    .brand-station { margin-top: 3px; font-size: 13.5px; color: var(--ink-3); }
+    .brand-station strong { font-weight: 600; color: var(--ink-2); }
+
+    .controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+    .link-state {
+      display: none;
+      align-items: center; gap: 8px;
+      margin-right: 6px;
+      font-size: 14px; color: var(--ink-3);
+    }
+    #hdr-connection-status { display: inline-flex; align-items: center; gap: 7px; color: var(--ok); font-weight: 600; }
+    @media (min-width: 720px) { .link-state { display: inline-flex; } }
+    #audio-icon { display: inline-flex; }
+    #audio-text { display: none; }
+    @media (min-width: 900px) { #audio-text { display: inline; } }
+
+    /* ==========================================================
+       Status band
+       ========================================================== */
+    .statusbar {
+      background: var(--state-bg);
+      border-bottom: 1px solid var(--state-rule);
+      transition: background .5s, border-color .5s;
+    }
+    .statusbar-inner {
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+      gap: 6px 28px;
+      padding-top: 10px; padding-bottom: 10px;
+    }
+    .status-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    #status-pulse-dot { color: var(--state); }
+    body[data-level="critical"] #status-pulse-dot { animation-duration: 0.9s; }
+    #status-header-text {
+      font: 600 17px/1 var(--f-display);
+      letter-spacing: .07em;
+      color: var(--state);
+      white-space: nowrap;
+    }
+    #status-header-sub {
+      display: none;
+      padding-left: 12px;
+      border-left: 1px solid var(--state-rule);
+      font-size: 14px; color: var(--ink-2);
+    }
+    @media (min-width: 900px) { #status-header-sub { display: inline; } }
+    .status-right { display: flex; gap: 26px; font-size: 14px; }
+    .status-right .k { color: var(--ink-3); margin-right: 6px; }
+    .status-right .v { font-weight: 600; color: var(--ink); }
+    .status-right .v.ok { color: var(--ok); }
+
+    /* ==========================================================
+       Page layout
+       ========================================================== */
+    .page { flex: 1; display: flex; flex-direction: column; gap: 20px; padding-top: 24px; padding-bottom: 32px; }
+    .layout { display: grid; grid-template-columns: 5fr 7fr; gap: 20px; align-items: stretch; }
+    .stack { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+    @media (max-width: 1024px) { .layout { grid-template-columns: 1fr; } }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--rule);
+      border-radius: 6px;
+      min-width: 0;
+    }
+    .panel-head {
+      display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+      padding: 14px 18px 12px;
+      border-bottom: 1px solid var(--rule);
+    }
+    .panel-title { font: 600 22px/1.1 var(--f-display); letter-spacing: .01em; }
+    .panel-sub { margin-top: 3px; font-size: 14px; color: var(--ink-3); }
+    .panel-body { padding: 16px 18px 18px; }
+    .datum { font-size: 13.5px; color: var(--ink-2); white-space: nowrap; padding-top: 3px; }
+
+    .label { font: 600 14px/1.3 var(--f-body); color: var(--ink-3); }
+    .unit  { font-size: 15px; color: var(--ink-3); }
+    .num   { font: 600 68px/.95 var(--f-display); letter-spacing: -.005em; }
+    .num-xl { font-size: 108px; }
+    .figure { display: flex; align-items: baseline; gap: 9px; margin: 14px 0 14px; }
+
+    .cell-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; min-height: 24px; }
+    .cell-foot {
+      display: flex; justify-content: space-between; gap: 12px;
+      margin-top: auto;
+      padding-top: 11px;
+      border-top: 1px dashed var(--rule-hi);
+      font-size: 14px; color: var(--ink-3);
+    }
+    .cell-foot .v { font-weight: 600; color: var(--ink-2); text-align: right; }
+    .cell-foot .v.ok   { color: var(--ok); }
+    .cell-foot .v.warn { color: var(--warn); }
+
+    .badge {
+      font: 600 13px/1 var(--f-body);
+      padding: 4px 8px;
+      border-radius: 2px;
+      background: var(--tone, var(--state));
+      color: #12181a;
+      transition: background .4s;
+    }
+
+    /* ==========================================================
+       Staff gauge (river stage visualizer)
+       ========================================================== */
+    .gauge-panel { display: flex; flex-direction: column; }
+    .gauge-body { flex: 1; display: flex; flex-direction: column; padding: 16px 18px 16px; }
+    .gauge {
+      position: relative;
+      flex: 1;
+      min-height: 440px;
+      display: flex;
+      border-radius: 3px;
+      overflow: hidden;
+      background: var(--sunk);
+      border: 1px solid var(--rule-hi);
+    }
+
+    /* enamel board */
+    .board {
+      position: relative;
+      flex: none;
+      width: 84px;
+      background: var(--board);
+      color: var(--board-ink);
+    }
+    .board svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .board svg line { stroke: var(--board-ink); stroke-width: 1; vector-effect: non-scaling-stroke; }
+    .board svg line.major { stroke-width: 2.5; }
+    .tick-label {
+      position: absolute;
+      left: 36px;
+      transform: translateY(50%);
+      font: 600 22px/1 var(--f-display);
+      pointer-events: none;
+    }
+    .tick-label small { font-size: 12px; font-weight: 600; margin-left: 1px; }
+    .tick-label.base { transform: none; margin-bottom: 3px; }
+    .zone-strip { position: absolute; top: 0; bottom: 0; right: 0; width: 9px; }
+
+    /* river column */
+    .basin { position: relative; flex: 1; overflow: hidden; }
+    .sensor {
+      position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+      width: 30px; height: 11px;
+      background: var(--panel-hi);
+      border: 1px solid var(--rule-hi); border-top: none;
+      border-radius: 0 0 4px 4px;
+      z-index: 6;
+    }
+    .beam {
+      position: absolute; top: 11px; bottom: 0; left: 50%;
+      border-left: 1px dashed rgba(229, 170, 51, .45);
+      z-index: 1;
+    }
+    .marker {
+      position: absolute; left: 0; right: 0; height: 0;
+      border-top: 1px dashed currentColor;
+      z-index: 5;
+    }
+    .marker span {
+      position: absolute; right: 8px; bottom: 5px;
+      padding: 2px 7px;
+      font: 600 13px/1.2 var(--f-body);
+      background: var(--sunk);
+      border: 1px solid currentColor;
+      border-radius: 2px;
+    }
+    .marker-alert { color: var(--warn); }
+    .marker-crit  { color: var(--crit); }
+
+    .water {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      z-index: 2;
+      transition: height .7s ease-out;
+    }
+    .water-fill {
+      width: 100%; height: 100%;
+      background-color: var(--w-fill);
+      transition: background-color .6s;
+    }
+    .wave {
+      position: absolute; left: 0; right: 0; bottom: 100%;
+      overflow: hidden;
+      margin-bottom: -1px;
+    }
+    .wave svg { display: block; width: 200%; height: 100%; transition: fill .6s; }
+    .wave-front { height: 14px; z-index: 2; }
+    .wave-front svg { fill: var(--w-fill); animation: drift 9s linear infinite; }
+    .wave-back { height: 20px; z-index: 1; }
+    .wave-back svg { fill: var(--w-top); opacity: .4; animation: drift 14s linear infinite reverse; }
+    @keyframes drift { to { transform: translateX(-50%); } }
+
+    .level-tag {
+      position: absolute; left: 0; top: 0;
+      transform: translateY(-50%);
+      z-index: 7;
+      padding: 3px 10px 3px 17px;
+      font: 600 19px/1.1 var(--f-display);
+      color: #12181a;
+      background: var(--state);
+      clip-path: polygon(11px 0, 100% 0, 100% 100%, 11px 100%, 0 50%);
+      transition: background .4s;
+    }
+    .level-tag small { font-size: 13px; font-weight: 600; }
+
+    .gauge-controls {
+      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
+      margin-top: 14px; padding-top: 14px;
+      border-top: 1px solid var(--rule);
+      font-size: 14px; color: var(--ink-3);
+    }
+    .seg { display: inline-flex; }
+    .seg .btn { border-radius: 0; margin-left: -1px; position: relative; padding: 7px 12px; }
+    .seg .btn:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
+    .seg .btn:last-child  { border-radius: 0 4px 4px 0; }
+    .seg .btn:hover { z-index: 1; }
+    .seg .btn-flash { color: var(--crit); border-color: #6b2f24; }
+    .seg .btn-flash:hover { background: #301c18; color: #ff8567; }
+
+    /* ==========================================================
+       Readout (level + rate)
+       ========================================================== */
+    .readout { display: grid; grid-template-columns: 1.35fr 1fr; overflow: hidden; }
+    .readout-cell { display: flex; flex-direction: column; padding: 16px 20px 15px; min-width: 0; }
+    .readout-cell + .readout-cell { border-left: 1px solid var(--rule); }
+    #cell-level .num { color: var(--ink); transition: color .4s; }
+    body[data-level="alert"] #cell-level .num { color: var(--warn); }
+    body[data-level="critical"] #cell-level .num { color: var(--crit); }
+
+    #cell-rate[data-rate="steady"]   { --tone: var(--ok); }
+    #cell-rate[data-rate="rising"]   { --tone: var(--warn); }
+    #cell-rate[data-rate="surge"]    { --tone: var(--crit); }
+    #cell-rate[data-rate="receding"] { --tone: var(--link); }
+    #cell-rate .num { color: var(--tone); }
+    .trend { font: 600 14px/1 var(--f-body); color: var(--tone); }
+    #cell-rate[data-rate="surge"] .trend { animation: blink 1s ease-in-out infinite; }
+
+    @media (max-width: 720px) {
+      .readout { grid-template-columns: 1fr; }
+      .readout-cell + .readout-cell { border-left: 0; border-top: 1px solid var(--rule); }
+      .num-xl { font-size: 88px; }
+    }
+
+    /* ==========================================================
+       Hydrograph
+       ========================================================== */
+    .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14px; color: var(--ink-2); padding-top: 3px; }
+    .legend span { display: inline-flex; align-items: center; gap: 7px; }
+    .legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid; }
+    .legend .l-level  { color: var(--link); }
+    .legend .l-alert  { color: var(--warn); }
+    .legend .l-danger { color: var(--crit); }
+    .legend .l-alert i, .legend .l-danger i { border-top-style: dashed; }
+    .legend em { font-style: normal; color: var(--ink-2); }
+    .chart-wrap { position: relative; height: 272px; }
+
+    /* ==========================================================
+       Siren + SMS blocks
+       ========================================================== */
+    .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 720px) { .pair { grid-template-columns: 1fr; } }
+    .block { display: flex; flex-direction: column; padding: 16px 18px 15px; }
+    .block-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; min-height: 24px; }
+    .status-pair { display: inline-flex; align-items: center; gap: 7px; font: 600 14px/1 var(--f-body); color: var(--ink-3); }
+
+    #buzzer-status-dot { color: var(--ink-3); }
+    #cell-buzzer[data-on="true"] #buzzer-status-dot { color: var(--crit); animation: blink 0.9s ease-in-out infinite; }
+    #cell-buzzer[data-on="true"] #buzzer-status-text { color: var(--crit); }
+
+    .siren-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0 14px; }
+    #buzzer-relay-state { font: 600 32px/1 var(--f-display); letter-spacing: .02em; color: var(--ink); }
+    #cell-buzzer[data-on="true"] #buzzer-relay-state { color: var(--crit); }
+    .sub { margin-top: 5px; font-size: 14px; color: var(--ink-3); }
+    #btn-buzzer-override.is-on { background: var(--crit); border-color: var(--crit); color: #1a0d09; font-weight: 600; }
+    #btn-buzzer-override.is-on:hover { background: #ff7455; }
+
+    .sms-figure { display: flex; align-items: baseline; gap: 9px; margin: 12px 0 8px; }
+    .kv { display: flex; flex-direction: column; margin-bottom: 14px; }
+    .kv > div {
+      display: flex; justify-content: space-between; gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px dashed var(--rule-hi);
+      font-size: 14px;
+    }
+    .kv dt { color: var(--ink-3); }
+    .kv dd { font-weight: 600; color: var(--ink); text-align: right; }
+    .kv dd.ok { color: var(--ok); }
+    .kv dd[data-tone="busy"] { color: var(--warn); }
+    .kv dd[data-tone="idle"] { color: var(--ok); }
+
+    #sms-badge-status { --tone: var(--link); }
+    #sms-badge-status[data-tone="sending"] { --tone: var(--crit); animation: blink 1s ease-in-out infinite; }
+
+    .btn-dispatch {
+      margin-top: auto;
+      width: 100%;
+      padding: 11px 14px;
+      font: 600 15px/1 var(--f-body);
+      color: #1a0d09;
+      background: var(--crit);
+      border: 1px solid var(--crit);
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .btn-dispatch:hover { background: #ff7455; }
+
+    /* ==========================================================
+       Terminal
+       ========================================================== */
+    .term-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--rule); }
+    .term-head h3 { font: 600 20px/1 var(--f-display); letter-spacing: .01em; }
+    .link-btn { background: none; border: 0; padding: 2px 0; font-size: 14px; color: var(--ink-3); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+    .link-btn:hover { color: var(--ink); }
+    #telemetry-terminal {
+      height: 176px;
+      overflow-y: auto;
+      padding: 10px 18px;
+      background: var(--sunk);
+      font: 400 12.5px/1.65 var(--f-mono);
+      font-variant-numeric: normal;
+      color: var(--ink-2);
+      user-select: text;
+    }
+    #telemetry-terminal .ts { color: var(--ink-3); opacity: .75; }
+    .log-muted { color: var(--ink-3); }
+    .log-ok    { color: var(--ok); }
+    .log-info  { color: #8fcbd6; }
+    .log-crit  { color: var(--crit); }
+    .log-warn  { color: var(--warn); }
+    .log-sim   { color: var(--link); }
+    .log-strong { font-weight: 500; }
+    .term-foot {
+      display: flex; justify-content: space-between;
+      padding: 8px 18px;
+      border-top: 1px solid var(--rule);
+      font-size: 13.5px; color: var(--ink-3);
+    }
+
+    /* ==========================================================
+       Config modal
+       ========================================================== */
+    .modal {
+      position: fixed; inset: 0; z-index: 60;
+      display: none; align-items: center; justify-content: center;
+      padding: 16px;
+      background: rgba(10, 14, 15, .78);
+    }
+    .modal.open { display: flex; }
+    .dialog {
+      width: 100%; max-width: 540px;
+      max-height: calc(100vh - 32px);
+      overflow-y: auto;
+      background: var(--panel);
+      border: 1px solid var(--rule-hi);
+      border-radius: 8px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, .55);
+    }
+    .dialog-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 22px; border-bottom: 1px solid var(--rule); }
+    .dialog-head h3 { font: 600 24px/1 var(--f-display); letter-spacing: .01em; }
+    .x-btn { background: none; border: 0; padding: 4px 8px; font-size: 18px; line-height: 1; color: var(--ink-3); cursor: pointer; border-radius: 3px; }
+    .x-btn:hover { color: var(--ink); background: var(--panel-hi); }
+    .dialog-body { padding: 18px 22px 8px; display: flex; flex-direction: column; gap: 16px; }
+    .field label { display: block; margin-bottom: 5px; font-size: 14px; font-weight: 600; color: var(--ink-2); }
+    .field input {
+      width: 100%;
+      padding: 9px 11px;
+      font: 400 13.5px/1.3 var(--f-mono);
+      color: var(--ink);
+      background: var(--sunk);
+      border: 1px solid var(--rule-hi);
+      border-radius: 4px;
+    }
+    .field input:focus { border-color: var(--link); outline: none; box-shadow: 0 0 0 2px rgba(122, 184, 178, .25); }
+    .field .hint { margin-top: 5px; font-size: 13px; color: var(--ink-3); }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 480px) { .field-row { grid-template-columns: 1fr; } }
+    fieldset { margin: 0; padding: 14px 0 0; border: 0; border-top: 1px solid var(--rule); }
+    fieldset legend { padding: 0 8px 0 0; font: 600 18px/1 var(--f-display); letter-spacing: .01em; color: var(--ink); float: left; width: 100%; margin-bottom: 12px; }
+    fieldset .field-row { clear: both; }
+    #cfg-thresh-alert { color: var(--warn); }
+    #cfg-thresh-crit  { color: var(--crit); }
+    .payload {
+      padding: 11px 13px;
+      background: var(--sunk);
+      border: 1px solid var(--rule);
+      border-radius: 4px;
+      font: 400 12px/1.6 var(--f-mono);
+      color: var(--ink-2);
+      word-break: break-all;
+    }
+    .payload strong { display: block; margin-bottom: 4px; font: 600 14px/1.2 var(--f-body); color: var(--link); }
+    .dialog-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 22px 20px; }
+    .btn-primary { background: var(--link); border-color: var(--link); color: #0f1b1c; font-weight: 600; }
+    .btn-primary:hover { background: #93cdc7; color: #0f1b1c; }
+
+    @media (max-width: 720px) {
+      .wrap { padding-left: 16px; padding-right: 16px; }
+      .page { padding-top: 16px; gap: 16px; }
+      .layout, .stack, .pair { gap: 16px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
   </style>
 </head>
 
-<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased selection:bg-teal-500 selection:text-black">
+<body data-level="safe">
 
-  <!-- TOP APP NAVIGATION BAR -->
-  <header class="bg-slate-900/90 border-b border-slate-800 sticky top-0 z-40 backdrop-blur-md">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-      
-      <!-- Brand Logo & Station Title -->
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-teal-600 to-emerald-400 flex items-center justify-center shadow-lg shadow-teal-900/40">
-          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-          </svg>
-        </div>
+  <!-- TOP BAR -->
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <rect class="board" x="6" y="2" width="9" height="28" rx="1.5"/>
+          <path class="ticks" d="M6 8h5M6 13h3M6 18h5M6 23h3"/>
+          <path class="wave" d="M2 19c2.6-2.4 4.6-2.4 7.2 0s4.6 2.4 7.2 0 4.6-2.4 7.2 0 4.6 2.4 6.2 1"/>
+        </svg>
         <div>
-          <div class="flex items-center gap-2">
-            <span class="font-display font-extrabold text-base tracking-tight text-white">FloodGuard</span>
-            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/10 text-teal-400 border border-teal-500/30">ESP32 TELEMETRY</span>
+          <div>
+            <span class="brand-name">FloodGuard</span><span class="brand-tag">ESP32 telemetry</span>
           </div>
-          <p class="text-xs text-slate-400 flex items-center gap-1.5">
-            <span class="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-ping"></span>
-            Station: <span id="hdr-station-name" class="font-medium text-slate-200">Malwathu Oya</span>
-          </p>
+          <p class="brand-station">Station: <strong id="hdr-station-name">Malvathu Oya #02</strong></p>
         </div>
       </div>
 
-      <!-- Station Controls & Quick Toggles -->
-      <div class="flex items-center gap-2 sm:gap-4">
-        
-        <!-- Live Hardware Ping Badge -->
-        <div class="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-800/80 rounded-lg border border-slate-700/60 text-xs">
-          <span class="text-slate-400">Status:</span>
-          <span id="hdr-connection-status" class="text-emerald-400 font-semibold flex items-center gap-1">
-            <span class="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span> Online (WiFi/MQTT)
-          </span>
+      <div class="controls">
+        <div class="link-state">
+          <span>Status:</span>
+          <span id="hdr-connection-status"><i class="dot live"></i> Online (WiFi/MQTT)</span>
         </div>
 
-        <!-- Audio Sirens Mute/Arm Button -->
-        <button onclick="toggleAudioMute()" id="btn-audio-mute" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium flex items-center gap-1.5 transition">
-          <span id="audio-icon">🔊</span>
-          <span id="audio-text" class="hidden md:inline">Audio Armed</span>
+        <button onclick="toggleAudioMute()" id="btn-audio-mute" class="btn" type="button">
+          <span id="audio-icon"></span>
+          <span id="audio-text">Audio armed</span>
         </button>
 
-        <!-- ESP32 Simulation Scenario Selector -->
-        <div class="relative">
-          <select id="sim-scenario" onchange="switchSimulationScenario(this.value)" class="bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-slate-200 rounded-lg text-xs py-1.5 px-3 focus:outline-none focus:ring-2 focus:ring-teal-500 transition cursor-pointer">
-            <option value="MONSOON_RISE">Scenario: Heavy Monsoon Inflow</option>
-            <option value="FLASH_FLOOD">Scenario: Rapid Flash Surge</option>
-            <option value="RECEDING">Scenario: Sluice Open (Receding)</option>
-            <option value="STABLE_NORMAL">Scenario: Normal Baseline Flow</option>
-          </select>
-        </div>
+        <select id="sim-scenario" onchange="switchSimulationScenario(this.value)" class="btn" aria-label="Simulation scenario">
+          <option value="MONSOON_RISE">Scenario: Heavy Monsoon Inflow</option>
+          <option value="FLASH_FLOOD">Scenario: Rapid Flash Surge</option>
+          <option value="RECEDING">Scenario: Sluice Open (Receding)</option>
+          <option value="STABLE_NORMAL">Scenario: Normal Baseline Flow</option>
+        </select>
 
-        <!-- Connection Settings Button -->
-        <button onclick="openConfigModal()" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition" title="ESP32 MQTT Configuration">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        <button onclick="openConfigModal()" class="btn btn-icon" type="button" title="ESP32 MQTT Configuration" aria-label="ESP32 MQTT Configuration">
+          <svg width="17" height="17" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
           </svg>
         </button>
       </div>
     </div>
   </header>
 
-  <!-- MASTER ALERT TICKER & RAPID STATUS -->
-  <div id="master-status-bar" class="bg-emerald-950/60 border-b border-emerald-800/60 px-4 py-2 text-xs font-medium text-emerald-300 transition-colors duration-500">
-    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
-      <div class="flex items-center gap-2">
-        <span id="status-pulse-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-        <span id="status-header-text" class="font-bold tracking-wide uppercase">NORMAL CONDITIONS : WATER LEVEL NOMINAL</span>
-        <span class="text-slate-400">|</span>
-        <span id="status-header-sub" class="text-slate-300 hidden sm:inline">No evacuation risk. Embankments and sluice gates operating within standard parameters.</span>
+  <!-- STATUS BAND -->
+  <div id="master-status-bar" class="statusbar">
+    <div class="wrap statusbar-inner">
+      <div class="status-left">
+        <span id="status-pulse-dot" class="dot live"></span>
+        <span id="status-header-text">NORMAL CONDITIONS : WATER LEVEL NOMINAL</span>
+        <span id="status-header-sub">No evacuation risk. Embankments and sluice gates operating within standard parameters.</span>
       </div>
-      <div class="flex items-center gap-4 text-xs font-mono">
-        <div><span class="text-slate-400">EST. TIME TO CREST:</span> <span id="stat-crest-eta" class="text-white font-bold">&gt; 12 hrs</span></div>
-        <div><span class="text-slate-400">BATTERY:</span> <span id="stat-battery" class="text-emerald-400 font-bold">12.6V (LiFePO4)</span></div>
+      <div class="status-right">
+        <div><span class="k">Est. time to crest</span><span id="stat-crest-eta" class="v">&gt; 12 hrs</span></div>
+        <div><span class="k">Battery</span><span id="stat-battery" class="v ok">12.6V (LiFePO4)</span></div>
       </div>
     </div>
   </div>
 
-  <!-- MAIN DASHBOARD CONTENT -->
-  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-grow flex flex-col gap-6 w-full">
+  <!-- MAIN -->
+  <main class="wrap page">
 
-    <!-- TOP KPI METRIC CARDS (4-COLUMN GRID) -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      
-      <!-- CARD 1: WATER LEVEL -->
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl relative overflow-hidden flex flex-col justify-between">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-400 tracking-wider uppercase">Stage Water Level</span>
-          <span id="card-level-badge" class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">SAFE</span>
-        </div>
-        <div class="mt-4 flex items-baseline gap-2">
-          <span id="disp-water-level" class="text-4xl font-extrabold font-display text-white tracking-tight">1.85</span>
-          <span class="text-slate-400 text-sm font-semibold">meters</span>
-        </div>
-        <div class="mt-3 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/80 pt-3">
-          <span>Threshold Freeboard:</span>
-          <span id="disp-freeboard-val" class="font-mono text-slate-200 font-semibold">3.15 m remaining</span>
-        </div>
-      </div>
+    <div class="layout">
 
-      <!-- CARD 2: WATER RISE RATE -->
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl relative overflow-hidden flex flex-col justify-between">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-400 tracking-wider uppercase">Rate of Rise (Velocity)</span>
-          <span id="disp-rise-arrow" class="text-xs font-bold text-emerald-400 flex items-center gap-0.5">
-            <span>▲</span> Steady
-          </span>
-        </div>
-        <div class="mt-4 flex items-baseline gap-2">
-          <span id="disp-rise-rate" class="text-4xl font-extrabold font-display text-emerald-400 tracking-tight">+0.4</span>
-          <span class="text-slate-400 text-sm font-semibold">cm / min</span>
-        </div>
-        <div class="mt-3 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/80 pt-3">
-          <span>Surge Warning Trigger:</span>
-          <span class="font-mono text-amber-400 font-semibold">&gt; 3.0 cm/min</span>
-        </div>
-      </div>
-
-      <!-- CARD 3: BUZZER / ALARM STATUS -->
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl relative overflow-hidden flex flex-col justify-between">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-400 tracking-wider uppercase">High-Decibel Siren</span>
-          <div class="flex items-center gap-1.5">
-            <span id="buzzer-status-dot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
-            <span id="buzzer-status-text" class="text-xs font-bold text-slate-400 uppercase">Standby</span>
-          </div>
-        </div>
-        <div class="mt-4 flex items-center justify-between">
+      <!-- LEFT: STAFF GAUGE -->
+      <section class="panel gauge-panel" aria-labelledby="gauge-title">
+        <div class="panel-head">
           <div>
-            <div class="text-2xl font-bold font-display text-white" id="buzzer-relay-state">RELAY: OFF</div>
-            <div class="text-xs text-slate-400 mt-0.5">GPIO 26 • 115 dB Output</div>
+            <h2 id="gauge-title" class="panel-title">River Bed Stage Visualizer</h2>
+            <p class="panel-sub">Ultrasonic echo profile (max 6.20m span)</p>
           </div>
-          <button id="btn-buzzer-override" onclick="toggleBuzzerManual()" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition shadow-sm">
-            TEST SIREN
-          </button>
+          <span class="datum">Datum: MSL +12.4m</span>
         </div>
-        <div class="mt-3 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/80 pt-3">
-          <span>Auto-Trip on Danger:</span>
-          <span class="text-emerald-400 font-semibold font-mono">ARMED (&gt; 5.0m)</span>
+
+        <div class="gauge-body">
+          <div class="gauge">
+
+            <div class="board" id="ruler">
+              <svg id="ruler-svg" viewBox="0 0 84 620" preserveAspectRatio="none" aria-hidden="true"></svg>
+              <div id="zone-strip" class="zone-strip"></div>
+            </div>
+
+            <div class="basin">
+              <div class="sensor"></div>
+              <div class="beam"></div>
+
+              <div id="marker-alert" class="marker marker-alert" style="bottom:56.5%"><span>Alert level (3.5m)</span></div>
+              <div id="marker-crit" class="marker marker-crit" style="bottom:80.6%"><span>Critical evacuation (5.0m)</span></div>
+
+              <div id="tank-water-body" class="water" style="height: 29.8%;">
+                <div class="wave wave-back">
+                  <svg viewBox="0 0 1200 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0,26 C75,8 225,8 300,26 C375,44 525,44 600,26 C675,8 825,8 900,26 C975,44 1125,44 1200,26 L1200,60 L0,60 Z"/></svg>
+                </div>
+                <div class="wave wave-front">
+                  <svg viewBox="0 0 1200 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0,30 C100,14 200,14 300,30 C400,46 500,46 600,30 C700,14 800,14 900,30 C1000,46 1100,46 1200,30 L1200,60 L0,60 Z"/></svg>
+                </div>
+                <div id="tank-gradient-body" class="water-fill"></div>
+                <div class="level-tag"><span id="gauge-level-tag">1.85</span> <small>m</small></div>
+              </div>
+            </div>
+
+          </div>
+
+          <div class="gauge-controls">
+            <span>Interactive level override</span>
+            <div class="seg">
+              <button onclick="adjustSimulatedWaterLevel(-0.5)" class="btn" type="button">-0.5m</button>
+              <button onclick="adjustSimulatedWaterLevel(+0.5)" class="btn" type="button">+0.5m</button>
+              <button onclick="adjustSimulatedWaterLevel(+1.5)" class="btn btn-flash" type="button">+1.5m Flash</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- RIGHT COLUMN -->
+      <div class="stack">
+
+        <!-- LEVEL + RATE -->
+        <section class="panel readout" aria-label="Current readings">
+          <div id="cell-level" class="readout-cell">
+            <div class="cell-head">
+              <span class="label">Stage water level</span>
+              <span id="card-level-badge" class="badge">Safe</span>
+            </div>
+            <div class="figure">
+              <span id="disp-water-level" class="num num-xl">1.85</span>
+              <span class="unit">meters</span>
+            </div>
+            <div class="cell-foot">
+              <span>Threshold freeboard</span>
+              <span id="disp-freeboard-val" class="v">3.15 m remaining</span>
+            </div>
+          </div>
+
+          <div id="cell-rate" class="readout-cell" data-rate="steady">
+            <div class="cell-head">
+              <span class="label">Rate of rise (velocity)</span>
+              <span id="disp-rise-arrow" class="trend"><span>•</span> Steady</span>
+            </div>
+            <div class="figure">
+              <span id="disp-rise-rate" class="num">+0.4</span>
+              <span class="unit">cm / min</span>
+            </div>
+            <div class="cell-foot">
+              <span>Surge warning trigger</span>
+              <span class="v warn">&gt; 3.0 cm/min</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- HYDROGRAPH -->
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h3 class="panel-title">Live Hydrometric Trend (Hydrograph)</h3>
+              <p class="panel-sub">Continuous 1.0 Hz ESP32 sampling stream</p>
+            </div>
+            <div class="legend">
+              <span class="l-level"><i></i><em>Level (m)</em></span>
+              <span class="l-alert"><i></i><em>Alert (3.5m)</em></span>
+              <span class="l-danger"><i></i><em>Danger (5.0m)</em></span>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="chart-wrap">
+              <canvas id="liveHydroChart"></canvas>
+            </div>
+          </div>
+        </section>
+
+        <!-- SIREN + SMS -->
+        <div class="pair">
+
+          <section id="cell-buzzer" class="panel block" data-on="false">
+            <div class="block-head">
+              <span class="label">High-decibel siren</span>
+              <span class="status-pair"><i id="buzzer-status-dot" class="dot"></i><span id="buzzer-status-text">Standby</span></span>
+            </div>
+            <div class="siren-row">
+              <div>
+                <div id="buzzer-relay-state">RELAY: OFF</div>
+                <div class="sub">GPIO 26, 115 dB output</div>
+              </div>
+              <button id="btn-buzzer-override" onclick="toggleBuzzerManual()" class="btn" type="button">Test siren</button>
+            </div>
+            <div class="cell-foot">
+              <span>Auto-trip on danger</span>
+              <span class="v ok">Armed (&gt; 5.0m)</span>
+            </div>
+          </section>
+
+          <section class="panel block">
+            <div class="block-head">
+              <span class="label">GSM SMS dispatch</span>
+              <span id="sms-badge-status" class="badge" data-tone="ready">Ready</span>
+            </div>
+            <div class="sms-figure">
+              <span id="disp-sms-count" class="num">1,840</span>
+              <span class="unit">recipients</span>
+            </div>
+            <dl class="kv">
+              <div><dt>SIM800L cellular signal</dt><dd id="disp-gsm-csq" class="ok">92% (-61 dBm)</dd></div>
+              <div><dt>Registered callout lists</dt><dd>3 sectors active</dd></div>
+              <div><dt>Pending queue</dt><dd id="stat-queue-count" data-tone="idle">0 pending</dd></div>
+            </dl>
+            <button onclick="triggerManualSmsBroadcast()" class="btn-dispatch" type="button">Dispatch test evacuation SMS</button>
+          </section>
+
         </div>
       </div>
-
-      <!-- CARD 4: GSM SMS BROADCAST STATUS -->
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl relative overflow-hidden flex flex-col justify-between">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-400 tracking-wider uppercase">GSM SMS Dispatch</span>
-          <span id="sms-badge-status" class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-500/10 text-teal-400 border border-teal-500/20">READY</span>
-        </div>
-        <div class="mt-4 flex items-baseline gap-2">
-          <span id="disp-sms-count" class="text-4xl font-extrabold font-display text-white tracking-tight">1,840</span>
-          <span class="text-slate-400 text-sm font-semibold">recipients</span>
-        </div>
-        <div class="mt-3 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/80 pt-3">
-          <span>SIM800L Cellular Signal:</span>
-          <span id="disp-gsm-csq" class="text-emerald-400 font-semibold font-mono">92% (-61 dBm)</span>
-        </div>
-      </div>
-
     </div>
 
-    <!-- MAIN GRID: CROSS SECTION VISUALIZER & HYDROGRAPH -->
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-
-      <!-- LEFT: INTERACTIVE RESERVOIR CROSS-SECTION (5 COLS) -->
-      <div class="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col">
-        <div class="flex items-center justify-between pb-4 border-b border-slate-800">
-          <div>
-            <h3 class="font-display font-bold text-base text-white">River Bed Stage Visualizer</h3>
-            <p class="text-xs text-slate-400">Ultrasonic Echo Profile (Max 6.20m Span)</p>
-          </div>
-          <span class="text-xs font-mono px-2 py-1 bg-slate-800 text-slate-300 rounded-lg border border-slate-700">Datum: MSL +12.4m</span>
-        </div>
-
-        <!-- TANK GRAPHIC CONTAINER -->
-        <div class="mt-5 relative flex-grow min-h-[360px] bg-slate-950 rounded-xl border-2 border-slate-800 overflow-hidden flex">
-          
-          <!-- Height Scale Metric Ruler -->
-          <div class="w-16 bg-slate-900/90 border-r border-slate-800 flex flex-col justify-between py-2 px-2 text-xs font-mono select-none z-20">
-            <div class="text-rose-400 font-bold flex items-center justify-between">
-              <span>6.0m</span><span class="w-2 h-0.5 bg-rose-500"></span>
-            </div>
-            <div class="text-rose-500/80 font-medium flex items-center justify-between">
-              <span>5.0m</span><span class="w-2 h-0.5 bg-rose-500/80"></span>
-            </div>
-            <div class="text-amber-400 font-medium flex items-center justify-between">
-              <span>3.5m</span><span class="w-2 h-0.5 bg-amber-400"></span>
-            </div>
-            <div class="text-slate-400 flex items-center justify-between">
-              <span>2.0m</span><span class="w-2 h-0.5 bg-slate-600"></span>
-            </div>
-            <div class="text-slate-500 flex items-center justify-between">
-              <span>1.0m</span><span class="w-2 h-0.5 bg-slate-700"></span>
-            </div>
-            <div class="text-slate-600 flex items-center justify-between">
-              <span>0.0m</span><span class="w-2 h-0.5 bg-slate-800"></span>
-            </div>
-          </div>
-
-          <!-- Cross-Section Basin with Animated Fluid Waves -->
-          <div class="relative flex-grow h-full flex flex-col justify-end overflow-hidden bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900">
-            
-            <!-- Horizontal Threshold Markers -->
-            <!-- Critical Threshold (5.0m = ~80.6%) -->
-            <div class="absolute w-full top-[19.3%] border-b-2 border-dashed border-rose-500/80 z-20 flex justify-end pr-2">
-              <span class="text-[10px] font-mono font-bold text-rose-400 bg-rose-950/80 px-2 py-0.5 rounded border border-rose-800">
-                CRITICAL EVACUATION (5.0m)
-              </span>
-            </div>
-
-            <!-- Alert Threshold (3.5m = ~56.4%) -->
-            <div class="absolute w-full top-[43.5%] border-b-2 border-dashed border-amber-500/80 z-20 flex justify-end pr-2">
-              <span class="text-[10px] font-mono font-bold text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-800">
-                ALERT LEVEL (3.5m)
-              </span>
-            </div>
-
-            <!-- Animated Fluid Column Body -->
-            <div id="tank-water-body" class="w-full relative transition-all duration-700 ease-out" style="height: 29.8%;">
-              
-              <!-- SVG Wave Layer 1 (Front) -->
-              <div class="absolute -top-7 left-0 right-0 w-[200%] h-8 overflow-hidden z-10 opacity-75">
-                <svg class="w-full h-full wave-anim-1 fill-cyan-500/60" viewBox="0 0 1200 120" preserveAspectRatio="none">
-                  <path d="M0,0 C150,90 350,-40 500,50 C650,140 900,-20 1200,40 L1200,120 L0,120 Z"></path>
-                </svg>
-              </div>
-
-              <!-- SVG Wave Layer 2 (Back) -->
-              <div class="absolute -top-9 left-0 right-0 w-[200%] h-10 overflow-hidden z-0 opacity-45">
-                <svg class="w-full h-full wave-anim-2 fill-blue-600/70" viewBox="0 0 1200 120" preserveAspectRatio="none">
-                  <path d="M0,0 C200,70 450,-30 600,40 C800,120 1000,-10 1200,50 L1200,120 L0,120 Z"></path>
-                </svg>
-              </div>
-
-              <!-- Fluid Deep Gradient -->
-              <div id="tank-gradient-body" class="w-full h-full bg-gradient-to-t from-blue-900/90 via-cyan-800/80 to-cyan-600/70 border-t border-cyan-300/40 relative">
-                <!-- Floating Bubble / Grid FX -->
-                <div class="absolute inset-0 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:16px_16px] opacity-25"></div>
-              </div>
-
-            </div>
-
-            <!-- Ultrasonic Beam Sensor Line -->
-            <div class="absolute top-0 inset-x-0 bottom-0 pointer-events-none flex justify-center z-10">
-              <div class="w-0.5 bg-yellow-400/40 border-dashed border-l border-yellow-300/50"></div>
-            </div>
-
-          </div>
-
-        </div>
-
-        <!-- Manual Quick Adjust Controls for Simulation -->
-        <div class="mt-4 pt-4 border-t border-slate-800 flex items-center justify-between">
-          <span class="text-xs text-slate-400">Interactive Level Override:</span>
-          <div class="flex items-center gap-1.5">
-            <button onclick="adjustSimulatedWaterLevel(-0.5)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700">-0.5m</button>
-            <button onclick="adjustSimulatedWaterLevel(+0.5)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700">+0.5m</button>
-            <button onclick="adjustSimulatedWaterLevel(+1.5)" class="px-2.5 py-1 bg-rose-950/60 hover:bg-rose-900 text-rose-300 text-xs font-semibold rounded-lg border border-rose-800">+1.5m Flash</button>
-          </div>
-        </div>
-
+    <!-- TERMINAL -->
+    <section class="panel" aria-label="ESP32 telemetry terminal">
+      <div class="term-head">
+        <h3>ESP32 Telemetry Terminal</h3>
+        <button onclick="clearConsoleLog()" class="link-btn" type="button">Clear</button>
       </div>
-
-      <!-- RIGHT: LIVE CHART & LOG TERMINALS (7 COLS) -->
-      <div class="lg:col-span-7 flex flex-col gap-6">
-
-        <!-- REALTIME HYDROGRAPH TELEMETRY CHART -->
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col flex-grow">
-          <div class="flex flex-wrap items-center justify-between gap-2 pb-4 border-b border-slate-800">
-            <div>
-              <h3 class="font-display font-bold text-base text-white">Live Hydrometric Trend (Hydrograph)</h3>
-              <p class="text-xs text-slate-400">Continuous 1.0 Hz ESP32 Sampling Stream</p>
-            </div>
-            <div class="flex items-center gap-4 text-xs font-medium">
-              <span class="flex items-center gap-1.5 text-cyan-400"><span class="w-2.5 h-0.5 bg-cyan-400 rounded-full inline-block"></span> Level (m)</span>
-              <span class="flex items-center gap-1.5 text-amber-400"><span class="w-2.5 h-0.5 bg-amber-400 rounded-full inline-block"></span> Alert (3.5m)</span>
-              <span class="flex items-center gap-1.5 text-rose-400"><span class="w-2.5 h-0.5 bg-rose-400 rounded-full inline-block"></span> Danger (5.0m)</span>
-            </div>
-          </div>
-
-          <div class="mt-4 flex-grow min-h-[220px] relative">
-            <canvas id="liveHydroChart"></canvas>
-          </div>
-        </div>
-
-        <!-- LOWER DUAL CARDS: SMS BROADCASTER & MQTT TERMINAL -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          
-          <!-- SMS EMERGENCY DISPATCH CONTROL -->
-          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col justify-between">
-            <div>
-              <div class="flex items-center justify-between">
-                <h4 class="text-xs font-bold uppercase tracking-wider text-slate-300">GSM Broadcast Console</h4>
-                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-              </div>
-              <p class="text-xs text-slate-400 mt-1">Automatic cellular broadcast triggered on critical alert state.</p>
-              
-              <div class="mt-3 space-y-2 text-xs">
-                <div class="flex justify-between text-slate-300 bg-slate-950 p-2 rounded-lg border border-slate-800/80">
-                  <span class="text-slate-400">Registered Callout Lists:</span>
-                  <span class="font-bold text-slate-200">3 Sectors Active</span>
-                </div>
-                <div class="flex justify-between text-slate-300 bg-slate-950 p-2 rounded-lg border border-slate-800/80">
-                  <span class="text-slate-400">Pending Queue:</span>
-                  <span id="stat-queue-count" class="font-mono text-emerald-400 font-bold">0 Pending</span>
-                </div>
-              </div>
-            </div>
-
-            <button onclick="triggerManualSmsBroadcast()" class="mt-3 w-full py-2 px-3 rounded-xl bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white text-xs font-bold tracking-wide transition shadow-lg shadow-rose-950/40">
-              DISPATCH TEST EVACUATION SMS
-            </button>
-          </div>
-
-          <!-- ESP32 HARDWARE MQTT TERMINAL & LOGS -->
-          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col justify-between">
-            <div class="flex items-center justify-between mb-2">
-              <h4 class="text-xs font-bold uppercase tracking-wider text-slate-300">ESP32 Telemetry Terminal</h4>
-              <button onclick="clearConsoleLog()" class="text-[10px] text-slate-400 hover:text-slate-200 underline">Clear</button>
-            </div>
-
-            <!-- Terminal Output Window -->
-            <div id="telemetry-terminal" class="bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-[11px] text-slate-300 h-32 overflow-y-auto space-y-1 select-text">
-              <div class="text-slate-500">[INIT] ESP32-WROOM-32 booting...</div>
-              <div class="text-slate-500">[WIFI] Connected to AP (RSSI: -54 dBm)</div>
-              <div class="text-emerald-400">[MQTT] Broker subscribed: hydro/stn04/telemetry</div>
-              <div class="text-cyan-400">[TELEMETRY] L: 1.85m | dY: +0.4cm/m | BUZZER: 0</div>
-            </div>
-
-            <div class="mt-2 flex items-center justify-between text-[10px] text-slate-500 font-mono">
-              <span>Baud: 115200</span>
-              <span id="terminal-packet-counter">Packets Received: 28</span>
-            </div>
-          </div>
-
-        </div>
-
+      <div id="telemetry-terminal">
+        <div class="log-muted">[INIT] ESP32-WROOM-32 booting...</div>
+        <div class="log-muted">[WIFI] Connected to AP (RSSI: -54 dBm)</div>
+        <div class="log-ok">[MQTT] Broker subscribed: hydro/stn04/telemetry</div>
+        <div class="log-info">[TELEMETRY] L: 1.85m | dY: +0.4cm/m | BUZZER: 0</div>
       </div>
-
-    </div>
+      <div class="term-foot">
+        <span>Baud: 115200</span>
+        <span id="terminal-packet-counter">Packets Received: 28</span>
+      </div>
+    </section>
 
   </main>
 
   <!-- MQTT & HARDWARE CONFIGURATION MODAL -->
-  <div id="config-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
-    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
-      <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
-        <h3 class="font-display font-bold text-lg text-white">ESP32 Hardware & MQTT Connection</h3>
-        <button onclick="closeConfigModal()" class="text-slate-400 hover:text-white font-bold p-1">✕</button>
+  <div id="config-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="cfg-title">
+    <div class="dialog">
+      <div class="dialog-head">
+        <h3 id="cfg-title">ESP32 Hardware &amp; MQTT Connection</h3>
+        <button onclick="closeConfigModal()" class="x-btn" type="button" aria-label="Close">✕</button>
       </div>
 
-      <div class="space-y-4 text-xs">
-        <div>
-          <label class="block font-medium text-slate-300 mb-1">WebSocket MQTT Broker URL:</label>
-          <input id="cfg-broker-url" type="text" value="wss://broker.emqx.io:8084/mqtt" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 focus:ring-2 focus:ring-teal-500 outline-none font-mono">
-          <p class="text-[10px] text-slate-500 mt-1">Accepts any public/private broker with WebSocket TLS support (EMQX, HiveMQ, Mosquitto).</p>
+      <div class="dialog-body">
+        <div class="field">
+          <label for="cfg-broker-url">WebSocket MQTT Broker URL</label>
+          <input id="cfg-broker-url" type="text" value="wss://broker.emqx.io:8084/mqtt">
+          <p class="hint">Accepts any public/private broker with WebSocket TLS support (EMQX, HiveMQ, Mosquitto).</p>
         </div>
 
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block font-medium text-slate-300 mb-1">Telemetry Sub Topic:</label>
-            <input id="cfg-sub-topic" type="text" value="hydro/stn04/telemetry" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 focus:ring-2 focus:ring-teal-500 outline-none font-mono">
+        <div class="field-row">
+          <div class="field">
+            <label for="cfg-sub-topic">Telemetry Sub Topic</label>
+            <input id="cfg-sub-topic" type="text" value="hydro/stn04/telemetry">
           </div>
-          <div>
-            <label class="block font-medium text-slate-300 mb-1">Command Pub Topic:</label>
-            <input id="cfg-pub-topic" type="text" value="hydro/stn04/commands" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 focus:ring-2 focus:ring-teal-500 outline-none font-mono">
+          <div class="field">
+            <label for="cfg-pub-topic">Command Pub Topic</label>
+            <input id="cfg-pub-topic" type="text" value="hydro/stn04/commands">
           </div>
         </div>
 
-        <div class="border-t border-slate-800 pt-3">
-          <h4 class="font-bold text-slate-300 mb-2">Custom Flood Alert Thresholds</h4>
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-slate-400 mb-1">Alert Mark (m):</label>
-              <input id="cfg-thresh-alert" type="number" step="0.1" value="3.5" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-amber-400 focus:ring-2 focus:ring-teal-500 outline-none font-mono">
+        <fieldset>
+          <legend>Custom Flood Alert Thresholds</legend>
+          <div class="field-row">
+            <div class="field">
+              <label for="cfg-thresh-alert">Alert Mark (m)</label>
+              <input id="cfg-thresh-alert" type="number" step="0.1" value="3.5">
             </div>
-            <div>
-              <label class="block text-slate-400 mb-1">Critical Danger Mark (m):</label>
-              <input id="cfg-thresh-crit" type="number" step="0.1" value="5.0" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-rose-400 focus:ring-2 focus:ring-teal-500 outline-none font-mono">
+            <div class="field">
+              <label for="cfg-thresh-crit">Critical Danger Mark (m)</label>
+              <input id="cfg-thresh-crit" type="number" step="0.1" value="5.0">
             </div>
           </div>
-        </div>
+        </fieldset>
 
-        <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono text-[10px] text-slate-400">
-          <strong class="text-teal-400">ESP32 Sample JSON Payload:</strong><br>
+        <div class="payload">
+          <strong>ESP32 Sample JSON Payload</strong>
           {"station_id":"STN-04","water_level_m":2.15,"rise_rate_cm_min":0.3,"buzzer":false,"sms_status":"IDLE"}
         </div>
       </div>
 
-      <div class="mt-6 flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
-        <button onclick="closeConfigModal()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">Cancel</button>
-        <button onclick="applyConfiguration()" class="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold shadow-lg shadow-teal-900/30">Connect & Save</button>
+      <div class="dialog-foot">
+        <button onclick="closeConfigModal()" class="btn" type="button">Cancel</button>
+        <button onclick="applyConfiguration()" class="btn btn-primary" type="button">Connect &amp; Save</button>
       </div>
     </div>
   </div>
 
-  <!-- APPLICATION LOGIC SCRIPT -->
+  <!-- APPLICATION LOGIC -->
   <script>
     /* =========================================================
        CORE STATE & CONFIGURATION
@@ -495,6 +880,11 @@
       chart: null,
     };
 
+    const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+    const ICON_SOUND = '<svg viewBox="0 0 18 16" width="18" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6h2.8L9.5 2.8v10.4L5.3 10H2.5z"/><path d="M12 5.5a3.6 3.6 0 0 1 0 5"/><path d="M14 3.6a6.3 6.3 0 0 1 0 8.8"/></svg>';
+    const ICON_MUTE  = '<svg viewBox="0 0 18 16" width="18" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6h2.8L9.5 2.8v10.4L5.3 10H2.5z"/><path d="M12.5 5.5l4 5M16.5 5.5l-4 5"/></svg>';
+
     // Web Audio Synthesizer for Buzzer Siren
     let audioCtx = null;
     let sirenOsc = null;
@@ -517,12 +907,12 @@
       const icon = document.getElementById('audio-icon');
 
       if (appState.audioMuted) {
-        text.innerText = 'Audio Muted';
-        icon.innerText = '🔇';
+        text.innerText = 'Audio muted';
+        icon.innerHTML = ICON_MUTE;
         stopSirenTone();
       } else {
-        text.innerText = 'Audio Armed';
-        icon.innerText = '🔊';
+        text.innerText = 'Audio armed';
+        icon.innerHTML = ICON_SOUND;
         initAudio();
         if (appState.buzzerActive) {
           startSirenTone();
@@ -569,6 +959,54 @@
     }
 
     /* =========================================================
+       STAFF GAUGE (ruler board, zone strip, threshold markers)
+       ========================================================= */
+    function buildRuler() {
+      const max = appState.maxScaleMeters;
+      const H = Math.round(max * 100);
+      const svg = document.getElementById('ruler-svg');
+      svg.setAttribute('viewBox', `0 0 84 ${H}`);
+
+      let lines = '';
+      for (let i = 0; i <= Math.floor(max * 10); i++) {
+        const y = (H - i * 10).toFixed(1);
+        let len = 8, cls = '';
+        if (i % 10 === 0) { len = 30; cls = ' class="major"'; }
+        else if (i % 5 === 0) { len = 19; }
+        lines += `<line${cls} x1="0" x2="${len}" y1="${y}" y2="${y}"/>`;
+      }
+      svg.innerHTML = lines;
+
+      const ruler = document.getElementById('ruler');
+      for (let v = 0; v <= Math.floor(max); v++) {
+        const label = document.createElement('div');
+        label.className = 'tick-label' + (v === 0 ? ' base' : '');
+        label.style.bottom = (v / max * 100) + '%';
+        label.innerHTML = `${v}<small>m</small>`;
+        ruler.appendChild(label);
+      }
+    }
+
+    function positionThresholdMarkers() {
+      const max = appState.maxScaleMeters;
+      const alertPct = Math.min(100, appState.alertThreshold / max * 100);
+      const critPct  = Math.min(100, appState.dangerThreshold / max * 100);
+
+      const a = document.getElementById('marker-alert');
+      const c = document.getElementById('marker-crit');
+      a.style.bottom = alertPct + '%';
+      c.style.bottom = critPct + '%';
+      a.querySelector('span').textContent = `Alert level (${appState.alertThreshold.toFixed(1)}m)`;
+      c.querySelector('span').textContent = `Critical evacuation (${appState.dangerThreshold.toFixed(1)}m)`;
+
+      document.getElementById('zone-strip').style.background =
+        `linear-gradient(to top,
+          ${cssVar('--ok')} 0, ${cssVar('--ok')} ${alertPct}%,
+          ${cssVar('--warn')} ${alertPct}%, ${cssVar('--warn')} ${critPct}%,
+          ${cssVar('--crit')} ${critPct}%, ${cssVar('--crit')} 100%)`;
+    }
+
+    /* =========================================================
        TELEMETRY UPDATER & CALCULATIONS
        ========================================================= */
     function updateTelemetry(newLevel) {
@@ -578,7 +1016,7 @@
       if (elapsedMinutes >= 0.02) {
         const deltaCm = (newLevel - appState.lastLevel) * 100;
         const instantRate = deltaCm / elapsedMinutes;
-        
+
         // Exponential moving average filter
         appState.riseRateCmMin = +(0.7 * appState.riseRateCmMin + 0.3 * instantRate).toFixed(2);
         appState.lastLevel = newLevel;
@@ -604,6 +1042,7 @@
     function renderUI() {
       // 1. Digital Water Level Readouts
       document.getElementById('disp-water-level').innerText = appState.waterLevel.toFixed(2);
+      document.getElementById('gauge-level-tag').innerText = appState.waterLevel.toFixed(2);
       const freeboard = Math.max(0, appState.maxScaleMeters - appState.waterLevel).toFixed(2);
       document.getElementById('disp-freeboard-val').innerText = `${freeboard} m remaining`;
 
@@ -611,62 +1050,47 @@
       const percent = Math.min(100, Math.max(5, (appState.waterLevel / appState.maxScaleMeters) * 100));
       document.getElementById('tank-water-body').style.height = `${percent.toFixed(1)}%`;
 
-      // 3. Status Level Categorization
-      const masterBar = document.getElementById('master-status-bar');
-      const dot = document.getElementById('status-pulse-dot');
+      // 3. Status Level Categorization (styling is driven by body[data-level])
       const headText = document.getElementById('status-header-text');
       const headSub = document.getElementById('status-header-sub');
       const badge = document.getElementById('card-level-badge');
-      const tankGradient = document.getElementById('tank-gradient-body');
 
       if (appState.waterLevel >= appState.dangerThreshold) {
-        masterBar.className = 'bg-rose-950/80 border-b border-rose-700/80 px-4 py-2 text-xs font-medium text-rose-200 transition-colors duration-500 pulse-glow-red';
-        dot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping';
+        document.body.dataset.level = 'critical';
         headText.innerText = 'CRITICAL DANGER : FLOOD SPILLWAY BREACH IMMINENT';
         headSub.innerText = 'High decibel evacuations active. Mobile relief and rescue personnel dispatched.';
-        badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/40';
-        badge.innerText = 'CRITICAL';
-        tankGradient.className = 'w-full h-full bg-gradient-to-t from-rose-950 via-rose-800/80 to-rose-600/70 border-t border-rose-300/40 relative';
+        badge.innerText = 'Critical';
       } else if (appState.waterLevel >= appState.alertThreshold) {
-        masterBar.className = 'bg-amber-950/80 border-b border-amber-700/80 px-4 py-2 text-xs font-medium text-amber-200 transition-colors duration-500 pulse-glow-amber';
-        dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping';
+        document.body.dataset.level = 'alert';
         headText.innerText = 'WARNING ALERT : RIVER STAGE EXCEEDING SAFE EMBANKMENT';
         headSub.innerText = 'Low lying flood plain areas placed on standby alert. Sluice discharge monitored.';
-        badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40';
-        badge.innerText = 'ALERT';
-        tankGradient.className = 'w-full h-full bg-gradient-to-t from-amber-950 via-amber-800/80 to-amber-600/70 border-t border-amber-300/40 relative';
+        badge.innerText = 'Alert';
       } else {
-        masterBar.className = 'bg-emerald-950/60 border-b border-emerald-800/60 px-4 py-2 text-xs font-medium text-emerald-300 transition-colors duration-500';
-        dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping';
+        document.body.dataset.level = 'safe';
         headText.innerText = 'NORMAL CONDITIONS : WATER LEVEL NOMINAL';
         headSub.innerText = 'No evacuation risk. Embankments and sluice gates operating within standard parameters.';
-        badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-        badge.innerText = 'SAFE';
-        tankGradient.className = 'w-full h-full bg-gradient-to-t from-blue-900/90 via-cyan-800/80 to-cyan-600/70 border-t border-cyan-300/40 relative';
+        badge.innerText = 'Safe';
       }
 
       // 4. Rate of Rise
+      const rateCell = document.getElementById('cell-rate');
       const rateEl = document.getElementById('disp-rise-rate');
       const arrowEl = document.getElementById('disp-rise-arrow');
       const sign = appState.riseRateCmMin >= 0 ? '+' : '';
       rateEl.innerText = `${sign}${appState.riseRateCmMin.toFixed(1)}`;
 
       if (appState.riseRateCmMin >= 2.5) {
-        arrowEl.className = 'text-xs font-bold text-rose-400 flex items-center gap-0.5 animate-bounce';
-        arrowEl.innerHTML = '<span>▲▲</span> SURGE';
-        rateEl.className = 'text-4xl font-extrabold font-display text-rose-400 tracking-tight';
+        rateCell.dataset.rate = 'surge';
+        arrowEl.innerHTML = '<span>▲▲</span> Surge';
       } else if (appState.riseRateCmMin >= 0.8) {
-        arrowEl.className = 'text-xs font-bold text-amber-400 flex items-center gap-0.5';
+        rateCell.dataset.rate = 'rising';
         arrowEl.innerHTML = '<span>▲</span> Rising';
-        rateEl.className = 'text-4xl font-extrabold font-display text-amber-400 tracking-tight';
       } else if (appState.riseRateCmMin <= -0.4) {
-        arrowEl.className = 'text-xs font-bold text-cyan-400 flex items-center gap-0.5';
+        rateCell.dataset.rate = 'receding';
         arrowEl.innerHTML = '<span>▼</span> Receding';
-        rateEl.className = 'text-4xl font-extrabold font-display text-cyan-400 tracking-tight';
       } else {
-        arrowEl.className = 'text-xs font-bold text-emerald-400 flex items-center gap-0.5';
+        rateCell.dataset.rate = 'steady';
         arrowEl.innerHTML = '<span>•</span> Steady';
-        rateEl.className = 'text-4xl font-extrabold font-display text-emerald-400 tracking-tight';
       }
 
       // 5. Estimated Time to Spillway Crest
@@ -693,33 +1117,29 @@
        ========================================================= */
     function setBuzzerState(active, reason = '') {
       appState.buzzerActive = active;
-      const dot = document.getElementById('buzzer-status-dot');
+      const cell = document.getElementById('cell-buzzer');
       const text = document.getElementById('buzzer-status-text');
       const relay = document.getElementById('buzzer-relay-state');
       const btn = document.getElementById('btn-buzzer-override');
 
+      cell.dataset.on = active ? 'true' : 'false';
+
       if (active) {
-        dot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping';
-        text.className = 'text-xs font-bold text-rose-400 uppercase';
-        text.innerText = 'SIREN ACTIVE';
+        text.innerText = 'Siren active';
         relay.innerText = 'RELAY: ON';
-        relay.className = 'text-2xl font-bold font-display text-rose-400';
-        btn.innerText = 'SILENCE SIREN';
-        btn.className = 'px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition shadow-md shadow-rose-950/50';
+        btn.innerText = 'Silence siren';
+        btn.classList.add('is-on');
 
         startSirenTone();
-        appendTerminalLog(`[GPIO 26] Buzzer Relay TRIGGERED: ${reason}`, 'text-rose-400 font-bold');
+        appendTerminalLog(`[GPIO 26] Buzzer Relay TRIGGERED: ${reason}`, 'log-crit log-strong');
       } else {
-        dot.className = 'w-2.5 h-2.5 rounded-full bg-slate-500';
-        text.className = 'text-xs font-bold text-slate-400 uppercase';
-        text.innerText = 'STANDBY';
+        text.innerText = 'Standby';
         relay.innerText = 'RELAY: OFF';
-        relay.className = 'text-2xl font-bold font-display text-white';
-        btn.innerText = 'TEST SIREN';
-        btn.className = 'px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition shadow-sm';
+        btn.innerText = 'Test siren';
+        btn.classList.remove('is-on');
 
         stopSirenTone();
-        appendTerminalLog(`[GPIO 26] Buzzer Relay DISARMED: ${reason}`, 'text-slate-400');
+        appendTerminalLog(`[GPIO 26] Buzzer Relay DISARMED: ${reason}`, 'log-muted');
       }
 
       // MQTT Publish if connected
@@ -745,19 +1165,19 @@
       const badge = document.getElementById('sms-badge-status');
       const queue = document.getElementById('stat-queue-count');
 
-      badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse';
-      badge.innerText = 'BROADCASTING';
-      queue.innerText = '1,840 Queued';
-      queue.className = 'font-mono text-amber-400 font-bold';
+      badge.dataset.tone = 'sending';
+      badge.innerText = 'Broadcasting';
+      queue.innerText = '1,840 queued';
+      queue.dataset.tone = 'busy';
 
-      appendTerminalLog(`[GSM SIM800L] Initiating AT+CMGS broadcast to 1,840 subscribers...`, 'text-amber-300 font-semibold');
+      appendTerminalLog(`[GSM SIM800L] Initiating AT+CMGS broadcast to 1,840 subscribers...`, 'log-warn log-strong');
 
       setTimeout(() => {
-        badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-500/10 text-teal-400 border border-teal-500/20';
-        badge.innerText = 'DELIVERED (100%)';
-        queue.innerText = '0 Pending';
-        queue.className = 'font-mono text-emerald-400 font-bold';
-        appendTerminalLog(`[GSM SIM800L] Broadcast ACK: 1840/1840 messages delivered to cell carriers.`, 'text-emerald-400 font-semibold');
+        badge.dataset.tone = 'done';
+        badge.innerText = 'Delivered (100%)';
+        queue.innerText = '0 pending';
+        queue.dataset.tone = 'idle';
+        appendTerminalLog(`[GSM SIM800L] Broadcast ACK: 1840/1840 messages delivered to cell carriers.`, 'log-ok log-strong');
       }, 2500);
     }
 
@@ -771,6 +1191,13 @@
       const alertLine = [];
       const dangerLine = [];
       const now = Date.now();
+
+      const cLevel = cssVar('--link');
+      const cWarn = cssVar('--warn');
+      const cCrit = cssVar('--crit');
+      const cInk3 = cssVar('--ink-3');
+      const cRule = cssVar('--rule');
+      const bodyFont = "'Source Sans 3', system-ui, sans-serif";
 
       for (let i = 24; i >= 0; i--) {
         const time = new Date(now - i * 10000);
@@ -788,20 +1215,20 @@
             {
               label: 'Water Stage (m)',
               data: initialData,
-              borderColor: '#22d3ee',
-              backgroundColor: 'rgba(34, 211, 238, 0.12)',
-              borderWidth: 2.5,
-              tension: 0.35,
+              borderColor: cLevel,
+              backgroundColor: cLevel + '1f',
+              borderWidth: 2,
+              tension: 0.3,
               fill: true,
-              pointRadius: 2,
-              pointHoverRadius: 5,
-              pointBackgroundColor: '#22d3ee'
+              pointRadius: 0,
+              pointHoverRadius: 4,
+              pointBackgroundColor: cLevel
             },
             {
               label: 'Alert Threshold (3.5m)',
               data: alertLine,
-              borderColor: 'rgba(251, 191, 36, 0.75)',
-              borderWidth: 1.5,
+              borderColor: cWarn,
+              borderWidth: 1.25,
               borderDash: [6, 4],
               pointRadius: 0,
               fill: false
@@ -809,8 +1236,8 @@
             {
               label: 'Critical Threshold (5.0m)',
               data: dangerLine,
-              borderColor: 'rgba(244, 63, 94, 0.85)',
-              borderWidth: 2,
+              borderColor: cCrit,
+              borderWidth: 1.5,
               borderDash: [4, 4],
               pointRadius: 0,
               fill: false
@@ -825,18 +1252,20 @@
             y: {
               min: 0,
               max: 6.2,
-              grid: { color: 'rgba(255, 255, 255, 0.06)' },
+              grid: { color: cRule },
+              border: { display: false },
               ticks: {
-                color: '#94a3b8',
-                font: { family: 'JetBrains Mono', size: 10 },
+                color: cInk3,
+                font: { family: bodyFont, size: 12 },
                 callback: (v) => `${v.toFixed(1)}m`
               }
             },
             x: {
-              grid: { color: 'rgba(255, 255, 255, 0.03)' },
+              grid: { display: false },
+              border: { color: cRule },
               ticks: {
-                color: '#64748b',
-                font: { family: 'JetBrains Mono', size: 9 },
+                color: cInk3,
+                font: { family: bodyFont, size: 12 },
                 maxTicksLimit: 7
               }
             }
@@ -844,11 +1273,14 @@
           plugins: {
             legend: { display: false },
             tooltip: {
-              backgroundColor: '#0f172a',
-              borderColor: '#334155',
+              backgroundColor: cssVar('--panel-hi'),
+              borderColor: cssVar('--rule-hi'),
               borderWidth: 1,
-              titleFont: { family: 'JetBrains Mono', size: 11 },
-              bodyFont: { family: 'JetBrains Mono', size: 11 }
+              cornerRadius: 4,
+              titleColor: cssVar('--ink'),
+              bodyColor: cssVar('--ink-2'),
+              titleFont: { family: bodyFont, size: 13, weight: '600' },
+              bodyFont: { family: bodyFont, size: 13 }
             }
           }
         }
@@ -877,18 +1309,18 @@
     /* =========================================================
        TERMINAL LOGGING
        ========================================================= */
-    function appendTerminalLog(msg, customClass = 'text-slate-300') {
+    function appendTerminalLog(msg, customClass = '') {
       const term = document.getElementById('telemetry-terminal');
       const time = new Date().toTimeString().split(' ')[0];
       const line = document.createElement('div');
       line.className = customClass;
-      line.innerHTML = `<span class="text-slate-600">[${time}]</span> ${msg}`;
+      line.innerHTML = `<span class="ts">[${time}]</span> ${msg}`;
       term.appendChild(line);
       term.scrollTop = term.scrollHeight;
     }
 
     function clearConsoleLog() {
-      document.getElementById('telemetry-terminal').innerHTML = '<div class="text-slate-500">-- LOG FLUSHED --</div>';
+      document.getElementById('telemetry-terminal').innerHTML = '<div class="log-muted">-- LOG FLUSHED --</div>';
     }
 
     /* =========================================================
@@ -896,12 +1328,12 @@
        ========================================================= */
     function adjustSimulatedWaterLevel(delta) {
       updateTelemetry(appState.waterLevel + delta);
-      appendTerminalLog(`[SIMULATOR] Manual delta ${delta > 0 ? '+' : ''}${delta}m applied.`, 'text-teal-300 font-semibold');
+      appendTerminalLog(`[SIMULATOR] Manual delta ${delta > 0 ? '+' : ''}${delta}m applied.`, 'log-sim log-strong');
     }
 
     function switchSimulationScenario(val) {
       appState.scenario = val;
-      appendTerminalLog(`[SIMULATOR] Swapped active meteorological scenario to: ${val}`, 'text-amber-400 font-bold');
+      appendTerminalLog(`[SIMULATOR] Swapped active meteorological scenario to: ${val}`, 'log-warn log-strong');
     }
 
     function simulationStep() {
@@ -932,15 +1364,11 @@
        MODAL & MQTT BROKER CONFIGURATION
        ========================================================= */
     function openConfigModal() {
-      const modal = document.getElementById('config-modal');
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
+      document.getElementById('config-modal').classList.add('open');
     }
 
     function closeConfigModal() {
-      const modal = document.getElementById('config-modal');
-      modal.classList.add('hidden');
-      modal.classList.remove('flex');
+      document.getElementById('config-modal').classList.remove('open');
     }
 
     function applyConfiguration() {
@@ -948,9 +1376,10 @@
       const subTopic = document.getElementById('cfg-sub-topic').value;
       appState.alertThreshold = parseFloat(document.getElementById('cfg-thresh-alert').value) || 3.5;
       appState.dangerThreshold = parseFloat(document.getElementById('cfg-thresh-crit').value) || 5.0;
+      positionThresholdMarkers();
 
       closeConfigModal();
-      appendTerminalLog(`[MQTT] Connecting to WebSocket broker: ${brokerUrl}...`, 'text-teal-400 font-semibold');
+      appendTerminalLog(`[MQTT] Connecting to WebSocket broker: ${brokerUrl}...`, 'log-sim log-strong');
 
       try {
         if (appState.mqttClient) {
@@ -965,10 +1394,9 @@
 
         appState.mqttClient.on('connect', () => {
           appState.mqttConnected = true;
-          document.getElementById('hdr-connection-status').innerHTML = `
-            <span class="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span> Connected (Live MQTT)
-          `;
-          appendTerminalLog(`[MQTT] Subscribed to topic: ${subTopic}`, 'text-emerald-400 font-bold');
+          document.getElementById('hdr-connection-status').innerHTML =
+            '<i class="dot live"></i> Connected (Live MQTT)';
+          appendTerminalLog(`[MQTT] Subscribed to topic: ${subTopic}`, 'log-ok log-strong');
           appState.mqttClient.subscribe(subTopic);
         });
 
@@ -981,18 +1409,18 @@
             if (data.buzzer !== undefined) {
               setBuzzerState(Boolean(data.buzzer), 'ESP32 Telemetry Status');
             }
-            appendTerminalLog(`[ESP32 RX] Level: ${data.water_level_m}m | Rate: ${data.rise_rate_cm_min}cm/m`, 'text-cyan-300');
+            appendTerminalLog(`[ESP32 RX] Level: ${data.water_level_m}m | Rate: ${data.rise_rate_cm_min}cm/m`, 'log-info');
           } catch(err) {
             console.error('JSON Parse error', err);
           }
         });
 
         appState.mqttClient.on('error', (err) => {
-          appendTerminalLog(`[MQTT ERROR] ${err.message}`, 'text-rose-400 font-bold');
+          appendTerminalLog(`[MQTT ERROR] ${err.message}`, 'log-crit log-strong');
         });
 
       } catch(e) {
-        appendTerminalLog(`[MQTT FAILED] ${e.message}`, 'text-rose-400');
+        appendTerminalLog(`[MQTT FAILED] ${e.message}`, 'log-crit');
       }
     }
 
@@ -1000,8 +1428,16 @@
        INITIALIZATION HOOK
        ========================================================= */
     window.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('audio-icon').innerHTML = ICON_SOUND;
+      buildRuler();
+      positionThresholdMarkers();
       initChart();
       renderUI();
+
+      // Re-measure chart text once the web fonts have loaded
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(() => { if (appState.chart) appState.chart.update(); });
+      }
 
       // Periodic simulation loop (1.5s interval)
       setInterval(() => {
