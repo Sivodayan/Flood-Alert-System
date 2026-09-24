@@ -1,5 +1,4 @@
-// db.js
-// SQLite connection, schema, and prepared statements for flood sensor readings.
+
 
 const Database = require('better-sqlite3');
 
