@@ -2,24 +2,24 @@
    Tokens
    ========================================================== */
 :root {
-  --ground:   #171d20;
-  --panel:    #1e2629;
-  --panel-hi: #263135;
-  --sunk:     #131819;
-  --rule:     #2f3b3f;
-  --rule-hi:  #465559;
+  --ground:    #171d20;
+  --panel:     #1e2629;
+  --panel-hi:  #263135;
+  --sunk:      #131819;
+  --rule:      #2f3b3f;
+  --rule-hi:   #465559;
 
-  --ink:      #e3e8e4;
-  --ink-2:    #aab6b2;
-  --ink-3:    #8a9a9d;
+  --ink:       #e3e8e4;
+  --ink-2:     #aab6b2;
+  --ink-3:     #8a9a9d;
 
-  --board:    #e4eae6;
-  --board-ink:#172023;
+  --board:     #e4eae6;
+  --board-ink: #172023;
 
-  --ok:       #8cc07a;
-  --warn:     #e5aa33;
-  --crit:     #f0603f;
-  --link:     #7ab8b2;
+  --ok:        #8cc07a;
+  --warn:      #e5aa33;
+  --crit:      #f0603f;
+  --link:      #7ab8b2;
 
   --f-display: 'Barlow Condensed', 'Arial Narrow', sans-serif;
   --f-body:    'Source Sans 3', 'Segoe UI', system-ui, sans-serif;
@@ -193,6 +193,7 @@ body[data-level="critical"] #status-pulse-dot { animation-duration: 0.9s; }
 .status-right .k { color: var(--ink-3); margin-right: 6px; }
 .status-right .v { font-weight: 600; color: var(--ink); }
 .status-right .v.ok { color: var(--ok); }
+.status-right .v.warn { color: var(--warn); }
 
 /* ==========================================================
    Page layout
@@ -276,10 +277,10 @@ body[data-level="critical"] #status-pulse-dot { animation-duration: 0.9s; }
   position: absolute;
   left: 36px;
   transform: translateY(50%);
-  font: 600 22px/1 var(--f-display);
+  font: 600 20px/1 var(--f-display);
   pointer-events: none;
 }
-.tick-label small { font-size: 12px; font-weight: 600; margin-left: 1px; }
+.tick-label small { font-size: 11px; font-weight: 600; margin-left: 1px; }
 .tick-label.base { transform: none; margin-bottom: 3px; }
 .zone-strip { position: absolute; top: 0; bottom: 0; right: 0; width: 9px; }
 
@@ -436,6 +437,7 @@ body[data-level="critical"] #cell-level .num { color: var(--crit); }
 
 #sms-badge-status { --tone: var(--link); }
 #sms-badge-status[data-tone="sending"] { --tone: var(--crit); animation: blink 1s ease-in-out infinite; }
+#sms-badge-status[data-tone="done"] { --tone: var(--ok); }
 
 .btn-dispatch {
   margin-top: auto;

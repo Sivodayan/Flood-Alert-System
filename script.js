@@ -2,23 +2,24 @@
    CORE STATE & CONFIGURATION
    ========================================================= */
 const appState = {
-  waterLevel: 1.85,
-  maxScaleMeters: 6.20,
-  alertThreshold: 3.50,
-  dangerThreshold: 5.00,
-  riseRateCmMin: 0.40,
-  lastLevel: 1.85,
-  lastTime: Date.now(),
+  nodeHost: 'localhost:3000',
+  mlHost: 'localhost:8001',
+  sensorId: 'sensor_01',
+
+  waterLevelCm: 0,
+  maxScaleCm: 70.0,            // Gauge scale maximum (cm)
+  alertThresholdCm: 35.0,      // Warning mark
+  dangerThresholdCm: 50.0,     // Danger mark matches ML service hardcoded limit
+
+  riseRateCmMin: 0.0,
   buzzerActive: false,
   buzzerManualOverride: false,
   audioMuted: false,
-  smsStatus: 'READY',
-  smsRecipients: 1840,
-  scenario: 'MONSOON_RISE',
-  packetCount: 28,
-  mqttClient: null,
-  mqttConnected: false,
+
+  packetCount: 0,
+  ws: null,
   chart: null,
+  mlPollTimer: null
 };
 
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -26,7 +27,9 @@ const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyV
 const ICON_SOUND = '<svg viewBox="0 0 18 16" width="18" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6h2.8L9.5 2.8v10.4L5.3 10H2.5z"/><path d="M12 5.5a3.6 3.6 0 0 1 0 5"/><path d="M14 3.6a6.3 6.3 0 0 1 0 8.8"/></svg>';
 const ICON_MUTE  = '<svg viewBox="0 0 18 16" width="18" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6h2.8L9.5 2.8v10.4L5.3 10H2.5z"/><path d="M12.5 5.5l4 5M16.5 5.5l-4 5"/></svg>';
 
-// Web Audio Synthesizer for Buzzer Siren
+/* =========================================================
+   AUDIO SYNTHESIZER (SIREN)
+   ========================================================= */
 let audioCtx = null;
 let sirenOsc = null;
 let sirenGain = null;
@@ -100,45 +103,47 @@ function stopSirenTone() {
 }
 
 /* =========================================================
-   STAFF GAUGE (ruler board, zone strip, threshold markers)
+   STAFF GAUGE RENDERING
    ========================================================= */
 function buildRuler() {
-  const max = appState.maxScaleMeters;
-  const H = Math.round(max * 100);
+  const max = appState.maxScaleCm;
+  const H = Math.round(max);
   const svg = document.getElementById('ruler-svg');
   svg.setAttribute('viewBox', `0 0 84 ${H}`);
 
   let lines = '';
-  for (let i = 0; i <= Math.floor(max * 10); i++) {
-    const y = (H - i * 10).toFixed(1);
+  for (let i = 0; i <= max; i += 2) {
+    const y = (H - i).toFixed(1);
     let len = 8, cls = '';
     if (i % 10 === 0) { len = 30; cls = ' class="major"'; }
-    else if (i % 5 === 0) { len = 19; }
+    else if (i % 5 === 0) { len = 18; }
     lines += `<line${cls} x1="0" x2="${len}" y1="${y}" y2="${y}"/>`;
   }
   svg.innerHTML = lines;
 
   const ruler = document.getElementById('ruler');
-  for (let v = 0; v <= Math.floor(max); v++) {
+  ruler.querySelectorAll('.tick-label').forEach(el => el.remove());
+
+  for (let v = 0; v <= max; v += 10) {
     const label = document.createElement('div');
     label.className = 'tick-label' + (v === 0 ? ' base' : '');
     label.style.bottom = (v / max * 100) + '%';
-    label.innerHTML = `${v}<small>m</small>`;
+    label.innerHTML = `${v}<small>cm</small>`;
     ruler.appendChild(label);
   }
 }
 
 function positionThresholdMarkers() {
-  const max = appState.maxScaleMeters;
-  const alertPct = Math.min(100, appState.alertThreshold / max * 100);
-  const critPct  = Math.min(100, appState.dangerThreshold / max * 100);
+  const max = appState.maxScaleCm;
+  const alertPct = Math.min(100, (appState.alertThresholdCm / max) * 100);
+  const critPct  = Math.min(100, (appState.dangerThresholdCm / max) * 100);
 
   const a = document.getElementById('marker-alert');
   const c = document.getElementById('marker-crit');
   a.style.bottom = alertPct + '%';
   c.style.bottom = critPct + '%';
-  a.querySelector('span').textContent = `Alert level (${appState.alertThreshold.toFixed(1)}m)`;
-  c.querySelector('span').textContent = `Critical evacuation (${appState.dangerThreshold.toFixed(1)}m)`;
+  a.querySelector('span').textContent = `Alert (${appState.alertThresholdCm.toFixed(1)} cm)`;
+  c.querySelector('span').textContent = `Danger (${appState.dangerThresholdCm.toFixed(1)} cm)`;
 
   document.getElementById('zone-strip').style.background =
     `linear-gradient(to top,
@@ -148,85 +153,80 @@ function positionThresholdMarkers() {
 }
 
 /* =========================================================
-   TELEMETRY UPDATER & CALCULATIONS
+   UI UPDATER & ALERT LOGIC
    ========================================================= */
-function updateTelemetry(newLevel) {
-  const now = Date.now();
-  const elapsedMinutes = (now - appState.lastTime) / 60000;
+function updateTelemetry(reading) {
+  const level = parseFloat(reading.water_level);
+  if (isNaN(level)) return;
 
-  if (elapsedMinutes >= 0.02) {
-    const deltaCm = (newLevel - appState.lastLevel) * 100;
-    const instantRate = deltaCm / elapsedMinutes;
-
-    // Exponential moving average filter
-    appState.riseRateCmMin = +(0.7 * appState.riseRateCmMin + 0.3 * instantRate).toFixed(2);
-    appState.lastLevel = newLevel;
-    appState.lastTime = now;
-  }
-
-  appState.waterLevel = +Math.max(0.1, Math.min(appState.maxScaleMeters, newLevel)).toFixed(2);
+  appState.waterLevelCm = level;
   appState.packetCount++;
 
-  // Auto Siren Safety Trip
+  if (reading.water_rising_level !== undefined && reading.water_rising_level !== null) {
+    appState.riseRateCmMin = parseFloat(reading.water_rising_level);
+  }
+
+  // Automatic Audible Siren Trip at Danger Level
   if (!appState.buzzerManualOverride) {
-    if (appState.waterLevel >= appState.dangerThreshold && !appState.buzzerActive) {
-      setBuzzerState(true, 'AUTOMATIC TRIP: Level >= 5.0m Danger Threshold');
-    } else if (appState.waterLevel < appState.dangerThreshold && appState.buzzerActive) {
-      setBuzzerState(false, 'NORMALIZED: Level < 5.0m');
+    if (appState.waterLevelCm >= appState.dangerThresholdCm && !appState.buzzerActive) {
+      setBuzzerState(true, `Level (${appState.waterLevelCm} cm) >= ${appState.dangerThresholdCm} cm Danger Mark`);
+    } else if (appState.waterLevelCm < appState.dangerThresholdCm && appState.buzzerActive) {
+      setBuzzerState(false, `Level (${appState.waterLevelCm} cm) normalized`);
     }
   }
 
   renderUI();
-  appendChartPoint(appState.waterLevel);
+  appendChartPoint(appState.waterLevelCm, reading.recorded_at);
 }
 
 function renderUI() {
-  // 1. Digital Water Level Readouts
-  document.getElementById('disp-water-level').innerText = appState.waterLevel.toFixed(2);
-  document.getElementById('gauge-level-tag').innerText = appState.waterLevel.toFixed(2);
-  const freeboard = Math.max(0, appState.maxScaleMeters - appState.waterLevel).toFixed(2);
-  document.getElementById('disp-freeboard-val').innerText = `${freeboard} m remaining`;
+  // 1. Digital Water Level Readout
+  document.getElementById('disp-water-level').innerText = appState.waterLevelCm.toFixed(1);
+  document.getElementById('gauge-level-tag').innerText = appState.waterLevelCm.toFixed(1);
 
-  // 2. Animated Tank Column Height
-  const percent = Math.min(100, Math.max(5, (appState.waterLevel / appState.maxScaleMeters) * 100));
+  const freeboard = Math.max(0, appState.dangerThresholdCm - appState.waterLevelCm).toFixed(1);
+  document.getElementById('disp-freeboard-val').innerText = `${freeboard} cm to danger`;
+
+  // 2. Animated Tank Level Height
+  const percent = Math.min(100, Math.max(3, (appState.waterLevelCm / appState.maxScaleCm) * 100));
   document.getElementById('tank-water-body').style.height = `${percent.toFixed(1)}%`;
 
-  // 3. Status Level Categorization (styling is driven by body[data-level])
+  // 3. Status Level Categorization
   const headText = document.getElementById('status-header-text');
   const headSub = document.getElementById('status-header-sub');
   const badge = document.getElementById('card-level-badge');
 
-  if (appState.waterLevel >= appState.dangerThreshold) {
+  if (appState.waterLevelCm >= appState.dangerThresholdCm) {
     document.body.dataset.level = 'critical';
-    headText.innerText = 'CRITICAL DANGER : FLOOD SPILLWAY BREACH IMMINENT';
-    headSub.innerText = 'High decibel evacuations active. Mobile relief and rescue personnel dispatched.';
-    badge.innerText = 'Critical';
-  } else if (appState.waterLevel >= appState.alertThreshold) {
+    headText.innerText = 'CRITICAL DANGER : FLOOD LEVEL EXCEEDED';
+    headSub.innerText = 'Water level has breached the 50cm threshold. Evacuate immediately.';
+    badge.innerText = 'Danger';
+  } else if (appState.waterLevelCm >= appState.alertThresholdCm) {
     document.body.dataset.level = 'alert';
-    headText.innerText = 'WARNING ALERT : RIVER STAGE EXCEEDING SAFE EMBANKMENT';
-    headSub.innerText = 'Low lying flood plain areas placed on standby alert. Sluice discharge monitored.';
+    headText.innerText = 'WARNING ALERT : WATER STAGE ELEVATED';
+    headSub.innerText = 'Water approaching embankment crest. Prepare precautionary procedures.';
     badge.innerText = 'Alert';
   } else {
     document.body.dataset.level = 'safe';
     headText.innerText = 'NORMAL CONDITIONS : WATER LEVEL NOMINAL';
-    headSub.innerText = 'No evacuation risk. Embankments and sluice gates operating within standard parameters.';
+    headSub.innerText = 'Sensor telemetry steady. Embankment and drainage channels free.';
     badge.innerText = 'Safe';
   }
 
-  // 4. Rate of Rise
+  // 4. Rate of Rise Readout
   const rateCell = document.getElementById('cell-rate');
   const rateEl = document.getElementById('disp-rise-rate');
   const arrowEl = document.getElementById('disp-rise-arrow');
   const sign = appState.riseRateCmMin >= 0 ? '+' : '';
   rateEl.innerText = `${sign}${appState.riseRateCmMin.toFixed(1)}`;
 
-  if (appState.riseRateCmMin >= 2.5) {
+  if (appState.riseRateCmMin >= 2.0) {
     rateCell.dataset.rate = 'surge';
     arrowEl.innerHTML = '<span>▲▲</span> Surge';
-  } else if (appState.riseRateCmMin >= 0.8) {
+  } else if (appState.riseRateCmMin >= 0.5) {
     rateCell.dataset.rate = 'rising';
     arrowEl.innerHTML = '<span>▲</span> Rising';
-  } else if (appState.riseRateCmMin <= -0.4) {
+  } else if (appState.riseRateCmMin <= -0.3) {
     rateCell.dataset.rate = 'receding';
     arrowEl.innerHTML = '<span>▼</span> Receding';
   } else {
@@ -234,22 +234,7 @@ function renderUI() {
     arrowEl.innerHTML = '<span>•</span> Steady';
   }
 
-  // 5. Estimated Time to Spillway Crest
-  if (appState.waterLevel >= appState.dangerThreshold) {
-    document.getElementById('stat-crest-eta').innerText = 'BREACH REACHED';
-  } else if (appState.riseRateCmMin > 0.2) {
-    const remainingCm = (appState.dangerThreshold - appState.waterLevel) * 100;
-    const minutes = Math.round(remainingCm / appState.riseRateCmMin);
-    if (minutes < 60) {
-      document.getElementById('stat-crest-eta').innerText = `${minutes} mins`;
-    } else {
-      document.getElementById('stat-crest-eta').innerText = `${(minutes / 60).toFixed(1)} hrs`;
-    }
-  } else {
-    document.getElementById('stat-crest-eta').innerText = '> 14 hrs';
-  }
-
-  // 6. Packet Counter
+  // 5. Packet Counter
   document.getElementById('terminal-packet-counter').innerText = `Packets Received: ${appState.packetCount}`;
 }
 
@@ -266,60 +251,207 @@ function setBuzzerState(active, reason = '') {
   cell.dataset.on = active ? 'true' : 'false';
 
   if (active) {
-    text.innerText = 'Siren active';
-    relay.innerText = 'RELAY: ON';
-    btn.innerText = 'Silence siren';
+    text.innerText = 'Siren Active';
+    relay.innerText = 'SIREN: ON';
+    btn.innerText = 'Silence Siren';
     btn.classList.add('is-on');
 
     startSirenTone();
-    appendTerminalLog(`[GPIO 26] Buzzer Relay TRIGGERED: ${reason}`, 'log-crit log-strong');
+    appendTerminalLog(`[ALARM] Siren Triggered: ${reason}`, 'log-crit log-strong');
   } else {
     text.innerText = 'Standby';
-    relay.innerText = 'RELAY: OFF';
-    btn.innerText = 'Test siren';
+    relay.innerText = 'SIREN: OFF';
+    btn.innerText = 'Test Siren';
     btn.classList.remove('is-on');
 
     stopSirenTone();
-    appendTerminalLog(`[GPIO 26] Buzzer Relay DISARMED: ${reason}`, 'log-muted');
-  }
-
-  // MQTT Publish if connected
-  if (appState.mqttClient && appState.mqttConnected) {
-    const topic = document.getElementById('cfg-pub-topic').value;
-    appState.mqttClient.publish(topic, JSON.stringify({
-      command: 'SET_BUZZER',
-      relay: 26,
-      state: active ? 1 : 0
-    }));
+    appendTerminalLog(`[ALARM] Siren Disarmed: ${reason}`, 'log-muted');
   }
 }
 
 function toggleBuzzerManual() {
   appState.buzzerManualOverride = true;
-  setBuzzerState(!appState.buzzerActive, 'Manual Operator Override Click');
+  setBuzzerState(!appState.buzzerActive, 'Manual Operator Click');
 }
 
 /* =========================================================
-   SMS DISPATCH SIMULATOR
+   NODE BACKEND REST & WEBSOCKET INTEGRATION
    ========================================================= */
-function triggerManualSmsBroadcast() {
+// 1. Fetch History on startup / sensor switch
+async function fetchHistory(sensorId = appState.sensorId, limit = 30) {
+  try {
+    const url = `http://${appState.nodeHost}/api/history?sensor_id=${sensorId}&limit=${limit}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const readings = await res.json();
+
+    if (Array.isArray(readings) && readings.length > 0) {
+      appendTerminalLog(`[REST] Loaded ${readings.length} historical readings for ${sensorId}`, 'log-ok');
+      
+      const labels = readings.map(r => new Date(r.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      const levels = readings.map(r => r.water_level);
+      const alertLine = new Array(readings.length).fill(appState.alertThresholdCm);
+      const dangerLine = new Array(readings.length).fill(appState.dangerThresholdCm);
+
+      appState.chart.data.labels = labels;
+      appState.chart.data.datasets[0].data = levels;
+      appState.chart.data.datasets[1].data = alertLine;
+      appState.chart.data.datasets[2].data = dangerLine;
+      appState.chart.update();
+
+      // Workaround for commented-out /api/latest endpoint: Pick last array item
+      const latestReading = readings[readings.length - 1];
+      updateTelemetry(latestReading);
+    } else {
+      appendTerminalLog(`[REST] No history returned for ${sensorId}`, 'log-warn');
+    }
+  } catch (err) {
+    appendTerminalLog(`[REST ERROR] History fetch failed: ${err.message}`, 'log-crit');
+  }
+}
+
+// 2. Connect Live WebSocket Broadcast Feed
+function initWebSocket() {
+  const statusEl = document.getElementById('hdr-connection-status');
+  if (appState.ws) {
+    try { appState.ws.close(); } catch(e) {}
+  }
+
+  const wsUrl = `ws://${appState.nodeHost}`;
+  appendTerminalLog(`[WS] Connecting to ${wsUrl}...`, 'log-sim');
+
+  appState.ws = new WebSocket(wsUrl);
+
+  appState.ws.onopen = () => {
+    statusEl.innerHTML = '<i class="dot live"></i> Online (WebSocket)';
+    appendTerminalLog(`[WS] Connected to live event stream`, 'log-ok log-strong');
+  };
+
+  appState.ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'reading') {
+        if (msg.sensor_id === appState.sensorId) {
+          updateTelemetry(msg);
+          appendTerminalLog(`[WS RX] ${msg.sensor_id} -> ${msg.water_level} cm (dY: ${msg.water_rising_level ?? 0} cm/min)`, 'log-info');
+        }
+      }
+    } catch (e) {
+      console.error('WS Parse Error', e);
+    }
+  };
+
+  appState.ws.onclose = () => {
+    statusEl.innerHTML = '<i class="dot" style="background:var(--crit)"></i> Offline (Reconnecting...)';
+    appendTerminalLog(`[WS] Connection closed. Retrying in 3s...`, 'log-warn');
+    setTimeout(() => {
+      if (!appState.ws || appState.ws.readyState === WebSocket.CLOSED) {
+        initWebSocket();
+      }
+    }, 3000);
+  };
+
+  appState.ws.onerror = (err) => {
+    console.error('WebSocket Error', err);
+    try { appState.ws.close(); } catch(e) {}
+  };
+}
+
+// 3. FastAPI Machine Learning Predict Service
+async function fetchPredictions(sensorId = appState.sensorId) {
+  const etaDisplay = document.getElementById('stat-crest-eta');
+  const fitDisplay = document.getElementById('stat-ml-fit');
+
+  try {
+    const res = await fetch(`http://${appState.mlHost}/predict?sensor_id=${sensorId}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    switch (data.status) {
+      case 'ok':
+        etaDisplay.innerText = `${data.eta_minutes.toFixed(1)} mins`;
+        fitDisplay.innerText = `${Math.round(data.r_squared * 100)}%`;
+        fitDisplay.className = data.r_squared > 0.7 ? 'v ok' : 'v warn';
+        document.getElementById('sms-payload-eta').innerText = `${data.eta_minutes.toFixed(1)} minutes`;
+        break;
+      case 'not_rising':
+        etaDisplay.innerText = 'Stable (Not rising)';
+        fitDisplay.innerText = data.r_squared !== undefined ? `${Math.round(data.r_squared * 100)}%` : '--';
+        fitDisplay.className = 'v';
+        break;
+      case 'already_danger':
+        etaDisplay.innerText = 'DANGER REACHED';
+        fitDisplay.innerText = '100%';
+        fitDisplay.className = 'v log-crit';
+        break;
+      case 'not_enough_data':
+        etaDisplay.innerText = 'Gathering points...';
+        fitDisplay.innerText = '--';
+        fitDisplay.className = 'v';
+        break;
+      default:
+        etaDisplay.innerText = 'Unavailable';
+        fitDisplay.innerText = '--';
+    }
+  } catch (err) {
+    etaDisplay.innerText = 'Service down';
+    fitDisplay.innerText = '--';
+  }
+}
+
+// 4. SMS Dispatch Integration (POST /api/alert)
+async function triggerManualSmsBroadcast() {
   const badge = document.getElementById('sms-badge-status');
-  const queue = document.getElementById('stat-queue-count');
-
   badge.dataset.tone = 'sending';
-  badge.innerText = 'Broadcasting';
-  queue.innerText = '1,840 queued';
-  queue.dataset.tone = 'busy';
+  badge.innerText = 'Sending...';
 
-  appendTerminalLog(`[GSM SIM800L] Initiating AT+CMGS broadcast to 1,840 subscribers...`, 'log-warn log-strong');
+  const alertPayload = {
+    alert: 'DANGER',
+    ETA: document.getElementById('sms-payload-eta').innerText || '15 minutes',
+    location: document.getElementById('sms-payload-location').innerText || 'Riverside Colony'
+  };
 
-  setTimeout(() => {
+  appendTerminalLog(`[REST] Dispatching POST /api/alert: ${JSON.stringify(alertPayload)}`, 'log-warn log-strong');
+
+  try {
+    const res = await fetch(`http://${appState.nodeHost}/api/alert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(alertPayload)
+    });
+    const result = await res.json();
+
     badge.dataset.tone = 'done';
-    badge.innerText = 'Delivered (100%)';
-    queue.innerText = '0 pending';
-    queue.dataset.tone = 'idle';
-    appendTerminalLog(`[GSM SIM800L] Broadcast ACK: 1840/1840 messages delivered to cell carriers.`, 'log-ok log-strong');
-  }, 2500);
+    badge.innerText = `Sent (${result.status})`;
+    appendTerminalLog(`[REST] Alert response status: ${result.status}`, 'log-ok log-strong');
+  } catch (err) {
+    badge.dataset.tone = 'ready';
+    badge.innerText = 'Failed';
+    appendTerminalLog(`[REST ERROR] /api/alert call failed: ${err.message}`, 'log-crit log-strong');
+  }
+}
+
+// 5. Test Reading Poster (POST /api/readings)
+async function simulatePostReading(deltaCm) {
+  const newLevel = Math.max(2, appState.waterLevelCm + deltaCm);
+  const payload = {
+    sensor_id: appState.sensorId,
+    water_level: +newLevel.toFixed(1),
+    water_rising_level: +(deltaCm * 0.4).toFixed(1)
+  };
+
+  appendTerminalLog(`[REST] Simulating sensor POST /api/readings -> ${payload.water_level} cm`, 'log-sim');
+
+  try {
+    const res = await fetch(`http://${appState.nodeHost}/api/readings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    appendTerminalLog(`[REST ERROR] Sensor simulation POST failed: ${err.message}`, 'log-crit');
+  }
 }
 
 /* =========================================================
@@ -327,11 +459,6 @@ function triggerManualSmsBroadcast() {
    ========================================================= */
 function initChart() {
   const ctx = document.getElementById('liveHydroChart').getContext('2d');
-  const initialLabels = [];
-  const initialData = [];
-  const alertLine = [];
-  const dangerLine = [];
-  const now = Date.now();
 
   const cLevel = cssVar('--link');
   const cWarn = cssVar('--warn');
@@ -340,34 +467,26 @@ function initChart() {
   const cRule = cssVar('--rule');
   const bodyFont = "'Source Sans 3', system-ui, sans-serif";
 
-  for (let i = 24; i >= 0; i--) {
-    const time = new Date(now - i * 10000);
-    initialLabels.push(time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-    initialData.push(+(1.75 + Math.sin(i * 0.25) * 0.2).toFixed(2));
-    alertLine.push(appState.alertThreshold);
-    dangerLine.push(appState.dangerThreshold);
-  }
-
   appState.chart = new Chart(ctx, {
     type: 'line',
     data: {
-      labels: initialLabels,
+      labels: [],
       datasets: [
         {
-          label: 'Water Stage (m)',
-          data: initialData,
+          label: 'Water Stage (cm)',
+          data: [],
           borderColor: cLevel,
           backgroundColor: cLevel + '1f',
           borderWidth: 2,
           tension: 0.3,
           fill: true,
-          pointRadius: 0,
+          pointRadius: 2,
           pointHoverRadius: 4,
           pointBackgroundColor: cLevel
         },
         {
-          label: 'Alert Threshold (3.5m)',
-          data: alertLine,
+          label: 'Alert Threshold (35 cm)',
+          data: [],
           borderColor: cWarn,
           borderWidth: 1.25,
           borderDash: [6, 4],
@@ -375,8 +494,8 @@ function initChart() {
           fill: false
         },
         {
-          label: 'Critical Threshold (5.0m)',
-          data: dangerLine,
+          label: 'Critical Danger (50 cm)',
+          data: [],
           borderColor: cCrit,
           borderWidth: 1.5,
           borderDash: [4, 4],
@@ -392,13 +511,13 @@ function initChart() {
       scales: {
         y: {
           min: 0,
-          max: 6.2,
+          max: appState.maxScaleCm,
           grid: { color: cRule },
           border: { display: false },
           ticks: {
             color: cInk3,
             font: { family: bodyFont, size: 12 },
-            callback: (v) => `${v.toFixed(1)}m`
+            callback: (v) => `${v}cm`
           }
         },
         x: {
@@ -428,14 +547,16 @@ function initChart() {
   });
 }
 
-function appendChartPoint(level) {
+function appendChartPoint(level, recordedAt = null) {
   if (!appState.chart) return;
-  const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const timeStr = recordedAt
+    ? new Date(recordedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
   appState.chart.data.labels.push(timeStr);
   appState.chart.data.datasets[0].data.push(level);
-  appState.chart.data.datasets[1].data.push(appState.alertThreshold);
-  appState.chart.data.datasets[2].data.push(appState.dangerThreshold);
+  appState.chart.data.datasets[1].data.push(appState.alertThresholdCm);
+  appState.chart.data.datasets[2].data.push(appState.dangerThresholdCm);
 
   if (appState.chart.data.labels.length > 30) {
     appState.chart.data.labels.shift();
@@ -448,10 +569,11 @@ function appendChartPoint(level) {
 }
 
 /* =========================================================
-   TERMINAL LOGGING
+   TERMINAL & LOGGING
    ========================================================= */
 function appendTerminalLog(msg, customClass = '') {
   const term = document.getElementById('telemetry-terminal');
+  if (!term) return;
   const time = new Date().toTimeString().split(' ')[0];
   const line = document.createElement('div');
   line.className = customClass;
@@ -465,43 +587,22 @@ function clearConsoleLog() {
 }
 
 /* =========================================================
-   SIMULATION & QUICK ADJUSTMENTS
+   SENSOR SWITCHING & MODAL
    ========================================================= */
-function adjustSimulatedWaterLevel(delta) {
-  updateTelemetry(appState.waterLevel + delta);
-  appendTerminalLog(`[SIMULATOR] Manual delta ${delta > 0 ? '+' : ''}${delta}m applied.`, 'log-sim log-strong');
+function switchSensor(sensorId) {
+  appState.sensorId = sensorId;
+  document.getElementById('hdr-station-name').innerText = sensorId;
+  appendTerminalLog(`[UI] Switched active sensor to ${sensorId}`, 'log-sim log-strong');
+
+  fetchHistory(sensorId);
+  fetchPredictions(sensorId);
 }
 
-function switchSimulationScenario(val) {
-  appState.scenario = val;
-  appendTerminalLog(`[SIMULATOR] Swapped active meteorological scenario to: ${val}`, 'log-warn log-strong');
-}
-
-function simulationStep() {
-  let stepDelta = 0;
-  switch (appState.scenario) {
-    case 'MONSOON_RISE':
-      stepDelta = 0.02 + (Math.random() * 0.015);
-      break;
-    case 'FLASH_FLOOD':
-      stepDelta = 0.065 + (Math.random() * 0.035);
-      break;
-    case 'RECEDING':
-      stepDelta = -0.04 - (Math.random() * 0.02);
-      break;
-    case 'STABLE_NORMAL':
-    default:
-      stepDelta = (Math.random() - 0.5) * 0.012;
-      break;
-  }
-
-  updateTelemetry(appState.waterLevel + stepDelta);
-}
-
-/* =========================================================
-   MODAL & MQTT BROKER CONFIGURATION
-   ========================================================= */
 function openConfigModal() {
+  document.getElementById('cfg-node-host').value = appState.nodeHost;
+  document.getElementById('cfg-ml-host').value = appState.mlHost;
+  document.getElementById('cfg-thresh-alert').value = appState.alertThresholdCm;
+  document.getElementById('cfg-thresh-crit').value = appState.dangerThresholdCm;
   document.getElementById('config-modal').classList.add('open');
 }
 
@@ -510,60 +611,22 @@ function closeConfigModal() {
 }
 
 function applyConfiguration() {
-  const brokerUrl = document.getElementById('cfg-broker-url').value;
-  const subTopic = document.getElementById('cfg-sub-topic').value;
-  appState.alertThreshold = parseFloat(document.getElementById('cfg-thresh-alert').value) || 3.5;
-  appState.dangerThreshold = parseFloat(document.getElementById('cfg-thresh-crit').value) || 5.0;
+  appState.nodeHost = document.getElementById('cfg-node-host').value.trim();
+  appState.mlHost = document.getElementById('cfg-ml-host').value.trim();
+  appState.alertThresholdCm = parseFloat(document.getElementById('cfg-thresh-alert').value) || 35.0;
+  appState.dangerThresholdCm = parseFloat(document.getElementById('cfg-thresh-crit').value) || 50.0;
+
   positionThresholdMarkers();
-
   closeConfigModal();
-  appendTerminalLog(`[MQTT] Connecting to WebSocket broker: ${brokerUrl}...`, 'log-sim log-strong');
 
-  try {
-    if (appState.mqttClient) {
-      appState.mqttClient.end();
-    }
-
-    appState.mqttClient = mqtt.connect(brokerUrl, {
-      clientId: 'FloodGuard_Client_' + Math.random().toString(16).substr(2, 6),
-      clean: true,
-      connectTimeout: 4000
-    });
-
-    appState.mqttClient.on('connect', () => {
-      appState.mqttConnected = true;
-      document.getElementById('hdr-connection-status').innerHTML =
-        '<i class="dot live"></i> Connected (Live MQTT)';
-      appendTerminalLog(`[MQTT] Subscribed to topic: ${subTopic}`, 'log-ok log-strong');
-      appState.mqttClient.subscribe(subTopic);
-    });
-
-    appState.mqttClient.on('message', (topic, message) => {
-      try {
-        const data = JSON.parse(message.toString());
-        if (data.water_level_m !== undefined) {
-          updateTelemetry(parseFloat(data.water_level_m));
-        }
-        if (data.buzzer !== undefined) {
-          setBuzzerState(Boolean(data.buzzer), 'ESP32 Telemetry Status');
-        }
-        appendTerminalLog(`[ESP32 RX] Level: ${data.water_level_m}m | Rate: ${data.rise_rate_cm_min}cm/m`, 'log-info');
-      } catch(err) {
-        console.error('JSON Parse error', err);
-      }
-    });
-
-    appState.mqttClient.on('error', (err) => {
-      appendTerminalLog(`[MQTT ERROR] ${err.message}`, 'log-crit log-strong');
-    });
-
-  } catch(e) {
-    appendTerminalLog(`[MQTT FAILED] ${e.message}`, 'log-crit');
-  }
+  appendTerminalLog(`[CONFIG] Reconnecting: Node -> ${appState.nodeHost} | ML -> ${appState.mlHost}`, 'log-sim log-strong');
+  initWebSocket();
+  fetchHistory();
+  fetchPredictions();
 }
 
 /* =========================================================
-   INITIALIZATION HOOK
+   LIFECYCLE INITIALIZATION
    ========================================================= */
 window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('audio-icon').innerHTML = ICON_SOUND;
@@ -572,13 +635,14 @@ window.addEventListener('DOMContentLoaded', () => {
   initChart();
   renderUI();
 
-  if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(() => { if (appState.chart) appState.chart.update(); });
-  }
+  // 1. Initial backend history load
+  fetchHistory();
 
-  setInterval(() => {
-    if (!appState.mqttConnected) {
-      simulationStep();
-    }
-  }, 1500);
+  // 2. Connect WebSocket
+  initWebSocket();
+
+  // 3. Connect ML service & poll periodically (every 15s)
+  fetchPredictions();
+  if (appState.mlPollTimer) clearInterval(appState.mlPollTimer);
+  appState.mlPollTimer = setInterval(() => fetchPredictions(), 15000);
 });

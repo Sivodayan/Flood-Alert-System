@@ -8,7 +8,6 @@
 
   <!-- External Libraries -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -33,16 +32,16 @@
         </svg>
         <div>
           <div>
-            <span class="brand-name">FloodGuard</span><span class="brand-tag">ESP32 telemetry</span>
+            <span class="brand-name">FloodGuard</span><span class="brand-tag">Node + FastAPI ML</span>
           </div>
-          <p class="brand-station">Station: <strong id="hdr-station-name">Malvathu Oya #02</strong></p>
+          <p class="brand-station">Active Sensor: <strong id="hdr-station-name">sensor_01</strong></p>
         </div>
       </div>
 
       <div class="controls">
         <div class="link-state">
-          <span>Status:</span>
-          <span id="hdr-connection-status"><i class="dot live"></i> Online (WiFi/MQTT)</span>
+          <span>WS Feed:</span>
+          <span id="hdr-connection-status"><i class="dot live"></i> Connecting...</span>
         </div>
 
         <button onclick="toggleAudioMute()" id="btn-audio-mute" class="btn" type="button">
@@ -50,14 +49,12 @@
           <span id="audio-text">Audio armed</span>
         </button>
 
-        <select id="sim-scenario" onchange="switchSimulationScenario(this.value)" class="btn" aria-label="Simulation scenario">
-          <option value="MONSOON_RISE">Scenario: Heavy Monsoon Inflow</option>
-          <option value="FLASH_FLOOD">Scenario: Rapid Flash Surge</option>
-          <option value="RECEDING">Scenario: Sluice Open (Receding)</option>
-          <option value="STABLE_NORMAL">Scenario: Normal Baseline Flow</option>
+        <select id="sensor-selector" onchange="switchSensor(this.value)" class="btn" aria-label="Select active sensor">
+          <option value="sensor_01" selected>Sensor: sensor_01</option>
+          <option value="sensor_02">Sensor: sensor_02</option>
         </select>
 
-        <button onclick="openConfigModal()" class="btn btn-icon" type="button" title="ESP32 MQTT Configuration" aria-label="ESP32 MQTT Configuration">
+        <button onclick="openConfigModal()" class="btn btn-icon" type="button" title="Backend Host Settings" aria-label="Backend Host Settings">
           <svg width="17" height="17" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
@@ -73,35 +70,34 @@
       <div class="status-left">
         <span id="status-pulse-dot" class="dot live"></span>
         <span id="status-header-text">NORMAL CONDITIONS : WATER LEVEL NOMINAL</span>
-        <span id="status-header-sub">No evacuation risk. Embankments and sluice gates operating within standard parameters.</span>
+        <span id="status-header-sub">No immediate flood danger detected on current monitoring stream.</span>
       </div>
       <div class="status-right">
-        <div><span class="k">Est. time to crest</span><span id="stat-crest-eta" class="v">&gt; 12 hrs</span></div>
-        <div><span class="k">Battery</span><span id="stat-battery" class="v ok">12.6V (LiFePO4)</span></div>
+        <div><span class="k">ML ETA (50cm)</span><span id="stat-crest-eta" class="v">Awaiting Data</span></div>
+        <div><span class="k">ML Fit (R²)</span><span id="stat-ml-fit" class="v ok">--</span></div>
       </div>
     </div>
   </div>
 
   <!-- MAIN -->
   <main class="wrap page">
-
     <div class="layout">
 
       <!-- LEFT: STAFF GAUGE -->
       <section class="panel gauge-panel" aria-labelledby="gauge-title">
         <div class="panel-head">
           <div>
-            <h2 id="gauge-title" class="panel-title">River Bed Stage Visualizer</h2>
-            <p class="panel-sub">Ultrasonic echo profile (max 6.20m span)</p>
+            <h2 id="gauge-title" class="panel-title">Ultrasonic Stage Visualizer</h2>
+            <p class="panel-sub">Level profile scaled to 0.70m span</p>
           </div>
-          <span class="datum">Datum: MSL +12.4m</span>
+          <span class="datum">Danger Threshold: 50.0 cm</span>
         </div>
 
         <div class="gauge-body">
           <div class="gauge">
 
             <div class="board" id="ruler">
-              <svg id="ruler-svg" viewBox="0 0 84 620" preserveAspectRatio="none" aria-hidden="true"></svg>
+              <svg id="ruler-svg" viewBox="0 0 84 70" preserveAspectRatio="none" aria-hidden="true"></svg>
               <div id="zone-strip" class="zone-strip"></div>
             </div>
 
@@ -109,10 +105,10 @@
               <div class="sensor"></div>
               <div class="beam"></div>
 
-              <div id="marker-alert" class="marker marker-alert" style="bottom:56.5%"><span>Alert level (3.5m)</span></div>
-              <div id="marker-crit" class="marker marker-crit" style="bottom:80.6%"><span>Critical evacuation (5.0m)</span></div>
+              <div id="marker-alert" class="marker marker-alert" style="bottom:50%"><span>Alert (35.0 cm)</span></div>
+              <div id="marker-crit" class="marker marker-crit" style="bottom:71.4%"><span>Critical Danger (50.0 cm)</span></div>
 
-              <div id="tank-water-body" class="water" style="height: 29.8%;">
+              <div id="tank-water-body" class="water" style="height: 20%;">
                 <div class="wave wave-back">
                   <svg viewBox="0 0 1200 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0,26 C75,8 225,8 300,26 C375,44 525,44 600,26 C675,8 825,8 900,26 C975,44 1125,44 1200,26 L1200,60 L0,60 Z"/></svg>
                 </div>
@@ -120,18 +116,18 @@
                   <svg viewBox="0 0 1200 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0,30 C100,14 200,14 300,30 C400,46 500,46 600,30 C700,14 800,14 900,30 C1000,46 1100,46 1200,30 L1200,60 L0,60 Z"/></svg>
                 </div>
                 <div id="tank-gradient-body" class="water-fill"></div>
-                <div class="level-tag"><span id="gauge-level-tag">1.85</span> <small>m</small></div>
+                <div class="level-tag"><span id="gauge-level-tag">--</span> <small>cm</small></div>
               </div>
             </div>
 
           </div>
 
           <div class="gauge-controls">
-            <span>Interactive level override</span>
+            <span>Simulate Sensor Push (POST /api/readings)</span>
             <div class="seg">
-              <button onclick="adjustSimulatedWaterLevel(-0.5)" class="btn" type="button">-0.5m</button>
-              <button onclick="adjustSimulatedWaterLevel(+0.5)" class="btn" type="button">+0.5m</button>
-              <button onclick="adjustSimulatedWaterLevel(+1.5)" class="btn btn-flash" type="button">+1.5m Flash</button>
+              <button onclick="simulatePostReading(-5.0)" class="btn" type="button">-5cm</button>
+              <button onclick="simulatePostReading(+5.0)" class="btn" type="button">+5cm</button>
+              <button onclick="simulatePostReading(+15.0)" class="btn btn-flash" type="button">+15cm Spike</button>
             </div>
           </div>
         </div>
@@ -148,27 +144,27 @@
               <span id="card-level-badge" class="badge">Safe</span>
             </div>
             <div class="figure">
-              <span id="disp-water-level" class="num num-xl">1.85</span>
-              <span class="unit">meters</span>
+              <span id="disp-water-level" class="num num-xl">--</span>
+              <span class="unit">cm</span>
             </div>
             <div class="cell-foot">
               <span>Threshold freeboard</span>
-              <span id="disp-freeboard-val" class="v">3.15 m remaining</span>
+              <span id="disp-freeboard-val" class="v">-- cm remaining</span>
             </div>
           </div>
 
           <div id="cell-rate" class="readout-cell" data-rate="steady">
             <div class="cell-head">
-              <span class="label">Rate of rise (velocity)</span>
+              <span class="label">Rate of rise (live feed)</span>
               <span id="disp-rise-arrow" class="trend"><span>•</span> Steady</span>
             </div>
             <div class="figure">
-              <span id="disp-rise-rate" class="num">+0.4</span>
+              <span id="disp-rise-rate" class="num">0.0</span>
               <span class="unit">cm / min</span>
             </div>
             <div class="cell-foot">
-              <span>Surge warning trigger</span>
-              <span class="v warn">&gt; 3.0 cm/min</span>
+              <span>Fast-rise alert threshold</span>
+              <span class="v warn">&gt; 2.0 cm/min</span>
             </div>
           </div>
         </section>
@@ -177,13 +173,13 @@
         <section class="panel">
           <div class="panel-head">
             <div>
-              <h3 class="panel-title">Live Hydrometric Trend (Hydrograph)</h3>
-              <p class="panel-sub">Continuous 1.0 Hz ESP32 sampling stream</p>
+              <h3 class="panel-title">Hydrometric Trend (Hydrograph)</h3>
+              <p class="panel-sub">History (GET /api/history) + WebSocket Live Broadcasts</p>
             </div>
             <div class="legend">
-              <span class="l-level"><i></i><em>Level (m)</em></span>
-              <span class="l-alert"><i></i><em>Alert (3.5m)</em></span>
-              <span class="l-danger"><i></i><em>Danger (5.0m)</em></span>
+              <span class="l-level"><i></i><em>Level (cm)</em></span>
+              <span class="l-alert"><i></i><em>Alert (35cm)</em></span>
+              <span class="l-danger"><i></i><em>Danger (50cm)</em></span>
             </div>
           </div>
           <div class="panel-body">
@@ -198,37 +194,37 @@
 
           <section id="cell-buzzer" class="panel block" data-on="false">
             <div class="block-head">
-              <span class="label">High-decibel siren</span>
+              <span class="label">Audible Siren</span>
               <span class="status-pair"><i id="buzzer-status-dot" class="dot"></i><span id="buzzer-status-text">Standby</span></span>
             </div>
             <div class="siren-row">
               <div>
-                <div id="buzzer-relay-state">RELAY: OFF</div>
-                <div class="sub">GPIO 26, 115 dB output</div>
+                <div id="buzzer-relay-state">SIREN: OFF</div>
+                <div class="sub">Audible siren generator</div>
               </div>
-              <button id="btn-buzzer-override" onclick="toggleBuzzerManual()" class="btn" type="button">Test siren</button>
+              <button id="btn-buzzer-override" onclick="toggleBuzzerManual()" class="btn" type="button">Test Siren</button>
             </div>
             <div class="cell-foot">
-              <span>Auto-trip on danger</span>
-              <span class="v ok">Armed (&gt; 5.0m)</span>
+              <span>Auto-trip threshold</span>
+              <span class="v ok">Armed (&gt;= 50.0 cm)</span>
             </div>
           </section>
 
           <section class="panel block">
             <div class="block-head">
-              <span class="label">GSM SMS dispatch</span>
+              <span class="label">SMS Emergency Dispatch</span>
               <span id="sms-badge-status" class="badge" data-tone="ready">Ready</span>
             </div>
             <div class="sms-figure">
-              <span id="disp-sms-count" class="num">1,840</span>
-              <span class="unit">recipients</span>
+              <span id="disp-sms-count" class="num">POST</span>
+              <span class="unit">/api/alert</span>
             </div>
             <dl class="kv">
-              <div><dt>SIM800L cellular signal</dt><dd id="disp-gsm-csq" class="ok">92% (-61 dBm)</dd></div>
-              <div><dt>Registered callout lists</dt><dd>3 sectors active</dd></div>
-              <div><dt>Pending queue</dt><dd id="stat-queue-count" data-tone="idle">0 pending</dd></div>
+              <div><dt>Target Node Endpoint</dt><dd>http://localhost:3000/api/alert</dd></div>
+              <div><dt>Payload ETA</dt><dd id="sms-payload-eta">15 minutes</dd></div>
+              <div><dt>Payload Location</dt><dd id="sms-payload-location">Riverside Colony</dd></div>
             </dl>
-            <button onclick="triggerManualSmsBroadcast()" class="btn-dispatch" type="button">Dispatch test evacuation SMS</button>
+            <button onclick="triggerManualSmsBroadcast()" class="btn-dispatch" type="button">Dispatch DANGER Alert SMS</button>
           </section>
 
         </div>
@@ -236,74 +232,63 @@
     </div>
 
     <!-- TERMINAL -->
-    <section class="panel" aria-label="ESP32 telemetry terminal">
+    <section class="panel" aria-label="Backend event terminal">
       <div class="term-head">
-        <h3>ESP32 Telemetry Terminal</h3>
+        <h3>Backend Integration &amp; Telemetry Log</h3>
         <button onclick="clearConsoleLog()" class="link-btn" type="button">Clear</button>
       </div>
       <div id="telemetry-terminal">
-        <div class="log-muted">[INIT] ESP32-WROOM-32 booting...</div>
-        <div class="log-muted">[WIFI] Connected to AP (RSSI: -54 dBm)</div>
-        <div class="log-ok">[MQTT] Broker subscribed: hydro/stn04/telemetry</div>
-        <div class="log-info">[TELEMETRY] L: 1.85m | dY: +0.4cm/m | BUZZER: 0</div>
+        <div class="log-muted">[INIT] Initializing FloodGuard Dashboard...</div>
       </div>
       <div class="term-foot">
-        <span>Baud: 115200</span>
-        <span id="terminal-packet-counter">Packets Received: 28</span>
+        <span>Node: 3000 | FastAPI ML: 8001</span>
+        <span id="terminal-packet-counter">Packets Received: 0</span>
       </div>
     </section>
 
   </main>
 
-  <!-- MQTT & HARDWARE CONFIGURATION MODAL -->
+  <!-- BACKEND CONFIGURATION MODAL -->
   <div id="config-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="cfg-title">
     <div class="dialog">
       <div class="dialog-head">
-        <h3 id="cfg-title">ESP32 Hardware &amp; MQTT Connection</h3>
+        <h3 id="cfg-title">Backend Connection Settings</h3>
         <button onclick="closeConfigModal()" class="x-btn" type="button" aria-label="Close">✕</button>
       </div>
 
       <div class="dialog-body">
         <div class="field">
-          <label for="cfg-broker-url">WebSocket MQTT Broker URL</label>
-          <input id="cfg-broker-url" type="text" value="wss://broker.emqx.io:8084/mqtt">
-          <p class="hint">Accepts any public/private broker with WebSocket TLS support (EMQX, HiveMQ, Mosquitto).</p>
+          <label for="cfg-node-host">Node API &amp; WebSocket Host</label>
+          <input id="cfg-node-host" type="text" value="localhost:3000">
+          <p class="hint">Serves REST routes and WebSocket feed on the same port.</p>
+        </div>
+
+        <div class="field">
+          <label for="cfg-ml-host">FastAPI ML Prediction Service Host</label>
+          <input id="cfg-ml-host" type="text" value="localhost:8001">
+          <p class="hint">Separate process running uvicorn ml_service:app.</p>
         </div>
 
         <div class="field-row">
           <div class="field">
-            <label for="cfg-sub-topic">Telemetry Sub Topic</label>
-            <input id="cfg-sub-topic" type="text" value="hydro/stn04/telemetry">
+            <label for="cfg-thresh-alert">Alert Mark (cm)</label>
+            <input id="cfg-thresh-alert" type="number" step="1" value="35.0">
           </div>
           <div class="field">
-            <label for="cfg-pub-topic">Command Pub Topic</label>
-            <input id="cfg-pub-topic" type="text" value="hydro/stn04/commands">
+            <label for="cfg-thresh-crit">Danger Mark (cm)</label>
+            <input id="cfg-thresh-crit" type="number" step="1" value="50.0">
           </div>
         </div>
 
-        <fieldset>
-          <legend>Custom Flood Alert Thresholds</legend>
-          <div class="field-row">
-            <div class="field">
-              <label for="cfg-thresh-alert">Alert Mark (m)</label>
-              <input id="cfg-thresh-alert" type="number" step="0.1" value="3.5">
-            </div>
-            <div class="field">
-              <label for="cfg-thresh-crit">Critical Danger Mark (m)</label>
-              <input id="cfg-thresh-crit" type="number" step="0.1" value="5.0">
-            </div>
-          </div>
-        </fieldset>
-
         <div class="payload">
-          <strong>ESP32 Sample JSON Payload</strong>
-          {"station_id":"STN-04","water_level_m":2.15,"rise_rate_cm_min":0.3,"buzzer":false,"sms_status":"IDLE"}
+          <strong>Backend Endpoints</strong>
+          WS: ws://&lt;host&gt;:3000 | History: /api/history | Predict: /predict?sensor_id=X
         </div>
       </div>
 
       <div class="dialog-foot">
         <button onclick="closeConfigModal()" class="btn" type="button">Cancel</button>
-        <button onclick="applyConfiguration()" class="btn btn-primary" type="button">Connect &amp; Save</button>
+        <button onclick="applyConfiguration()" class="btn btn-primary" type="button">Apply &amp; Reconnect</button>
       </div>
     </div>
   </div>
