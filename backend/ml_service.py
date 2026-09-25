@@ -4,7 +4,7 @@ import numpy as np
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sklearn.linear_model import LinearRegression
-//donot change any of this
+#donot change any of this
 DB_PATH = "flood_data.db"
 DANGER_LEVEL = 50.0   
 MIN_POINTS = 5        
