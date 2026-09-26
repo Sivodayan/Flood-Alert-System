@@ -7,10 +7,10 @@ const {sendSMS}=require('./sms')
 const router = express.Router()
 
 router.post('/api/readings', (req, res) => {// from ultra sonic sensors
-  const { sensor_id, water_level, water_rising_level} = req.body;//water risng level is no need to store in db for now
+  const { sensor_id, water_level, water_rising_speed} = req.body;//water risng speed is no need to store in db for now
   const recorded_at = new Date().toISOString()
 
-  broadcastReading({ sensor_id, water_level, recorded_at ,water_rising_level});
+  broadcastReading({ sensor_id, water_level, recorded_at ,water_rising_speed});
   console.log(`Received from ${sensor_id}: ${water_level} cm`)
   insertReading.run(sensor_id, water_level, recorded_at);
 
