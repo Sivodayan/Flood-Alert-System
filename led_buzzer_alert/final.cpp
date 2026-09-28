@@ -1,124 +1,85 @@
 #include <Arduino.h>
 #include <WiFi.h>
-#include <WebServer.h>
+#include <HTTPClient.h>
 
-// --- SOFT ACCESS POINT CREDENTIALS ---
-const char *ssid = "FloodNode_OutputServer";
-const char *password = "12345678"; // Must be at least 8 characters
+// --- CONFIGURATION & PINS ---
+const char *ssid = "FloodNode_OutputServer", *password = "12345678";
 
-// Create WebServer object on port 80
-WebServer server(80);
+// Backend endpoint to request data from (adjust IP/port if your backend uses a different one)
+const char* backendUrl = "http://192.168.4.2/get_rates"; 
 
-// --- PIN DEFINITIONS FOR 3 TANKS ---
-// Tank A (City 1)
-#define TANK_A_GREEN   12
-#define TANK_A_YELLOW  14
-#define TANK_A_RED     27
+// Pin layout for 3 tanks: {Green, Yellow, Red}
+const int TANK_PINS[3][3] = {
+  {12, 14, 27}, // Tank A (City 1)
+  {16, 17, 5},  // Tank B (City 2)
+  {18, 19, 21}  // Tank C (City 3)
+};
+#define BUZZER 26
 
-// Tank B (City 2)
-#define TANK_B_GREEN   16
-#define TANK_B_YELLOW  17
-#define TANK_B_RED     5
+unsigned long lastFetchTime = 0;
+const long fetchInterval = 2000; // Request data every 2 seconds (2000ms)
 
-// Tank C (City 3)
-#define TANK_C_GREEN   18
-#define TANK_C_YELLOW  19
-#define TANK_C_RED     21
+// Updates LEDs for a single tank and checks if critical
+bool updateTank(int tankIndex, float rate) {
+  bool highRisk = (rate >= 1.5);
+  bool warning  = (rate >= 0.5 && !highRisk);
 
-// Shared Alert Buzzer
-#define BUZZER         26
+  digitalWrite(TANK_PINS[tankIndex][0], (!highRisk && !warning) ? HIGH : LOW); // Green
+  digitalWrite(TANK_PINS[tankIndex][1], warning ? HIGH : LOW);                 // Yellow
+  digitalWrite(TANK_PINS[tankIndex][2], highRisk ? HIGH : LOW);                // Red
 
-// Helper to update LEDs for a specific tank
-void setTankLEDs(int greenPin, int yellowPin, int redPin, float rateOfRise, bool &isCritical) {
-  if (rateOfRise >= 1.5) {        // High Risk / Almost Flooded
-    digitalWrite(greenPin, LOW);
-    digitalWrite(yellowPin, LOW);
-    digitalWrite(redPin, HIGH);
-    isCritical = true;            // At least one tank is high risk
-  } 
-  else if (rateOfRise >= 0.5) {   // Moderate Warning
-    digitalWrite(greenPin, LOW);
-    digitalWrite(yellowPin, HIGH);
-    digitalWrite(redPin, LOW);
-  } 
-  else {                          // Normal / Safe
-    digitalWrite(greenPin, HIGH);
-    digitalWrite(yellowPin, LOW);
-    digitalWrite(redPin, LOW);
-  }
+  return highRisk;
 }
 
-// Core evaluation function for all 3 tanks
-void updateSystemAlerts(float rateA, float rateB, float rateC) {
-  bool criticalAlert = false;
+// Request data from the backend and update alerts
+void fetchAndUpdateAlerts() {
+  if (WiFi.softAPgetStationNum() > 0) { // Check if backend ESP32 is connected to hotspot
+    HTTPClient http;
+    http.begin(backendUrl);
+    int httpCode = http.GET(); // Send HTTP GET request to backend
 
-  // Update visual indicators for each city/tank independently
-  setTankLEDs(TANK_A_GREEN, TANK_A_YELLOW, TANK_A_RED, rateA, criticalAlert);
-  setTankLEDs(TANK_B_GREEN, TANK_B_YELLOW, TANK_B_RED, rateB, criticalAlert);
-  setTankLEDs(TANK_C_GREEN, TANK_C_YELLOW, TANK_C_RED, rateC, criticalAlert);
+    if (httpCode == HTTP_CODE_OK) {
+      String payload = http.getString(); // Expecting format: "0.2,0.8,1.8"
+      
+      // Parse rates for Tank A, B, and C
+      float rateA = payload.substring(0, payload.indexOf(',')).toFloat();
+      int firstComma = payload.indexOf(',');
+      int secondComma = payload.indexOf(',', firstComma + 1);
+      float rateB = payload.substring(firstComma + 1, secondComma).toFloat();
+      float rateC = payload.substring(secondComma + 1).toFloat();
 
-  // Turn on buzzer ONLY if AT LEAST ONE tank is almost flooded
-  if (criticalAlert) {
-    tone(BUZZER, 2000, 200); // 2000Hz tone for high alert
-  } else {
-    noTone(BUZZER);
-  }
-}
+      // Update LEDs for all 3 tanks
+      bool criticalAlert = false;
+      if (updateTank(0, rateA)) criticalAlert = true;
+      if (updateTank(1, rateB)) criticalAlert = true;
+      if (updateTank(2, rateC)) criticalAlert = true;
 
-// HTTP POST/GET Handler to process incoming data from the backend
-void handleUpdate() {
-  if (server.hasArg("rateA") && server.hasArg("rateB") && server.hasArg("rateC")) {
-    float rateA = server.arg("rateA").toFloat();
-    float rateB = server.arg("rateB").toFloat();
-    float rateC = server.arg("rateC").toFloat();
-
-    // Trigger LED & Buzzer alerts
-    updateSystemAlerts(rateA, rateB, rateC);
-
-    // Send HTTP OK response back to backend
-    server.send(200, "text/plain", "Data Received Successfully");
-  } else {
-    server.send(400, "text/plain", "Bad Request: Missing parameters");
+      // Trigger buzzer ONLY if at least one tank is almost flooded
+      if (criticalAlert) tone(BUZZER, 2000, 200); else noTone(BUZZER);
+    }
+    http.end();
   }
 }
 
 void setup() {
   Serial.begin(115200);
-
-  // Initialize pins for Tank A
-  pinMode(TANK_A_GREEN, OUTPUT);
-  pinMode(TANK_A_YELLOW, OUTPUT);
-  pinMode(TANK_A_RED, OUTPUT);
-
-  // Initialize pins for Tank B
-  pinMode(TANK_B_GREEN, OUTPUT);
-  pinMode(TANK_B_YELLOW, OUTPUT);
-  pinMode(TANK_B_RED, OUTPUT);
-
-  // Initialize pins for Tank C
-  pinMode(TANK_C_GREEN, OUTPUT);
-  pinMode(TANK_C_YELLOW, OUTPUT);
-  pinMode(TANK_C_RED, OUTPUT);
-
-  // Initialize Buzzer
+  
+  // Initialize LED pins and Buzzer
+  for (int i = 0; i < 3; i++) {
+    for (int j = 0; j < 3; j++) pinMode(TANK_PINS[i][j], OUTPUT);
+  }
   pinMode(BUZZER, OUTPUT);
 
-  // --- START SOFT ACCESS POINT (HOTSPOT) ---
+  // Start Soft AP (Hotspot)
   WiFi.softAP(ssid, password);
-  IPAddress IP = WiFi.softAPIP();
-  Serial.print("Access Point Started. IP Address: ");
-  Serial.println(IP); // Default IP is usually 192.168.4.1
-
-  // Define HTTP route for updating data
-  server.on("/update", HTTP_POST, handleUpdate);
-  server.on("/update", HTTP_GET, handleUpdate); // Allows both GET and POST requests
-
-  // Start the server
-  server.begin();
-  Serial.println("HTTP Web Server Started");
+  Serial.print("Hotspot Started. IP: ");
+  Serial.println(WiFi.softAPIP()); // Default: 192.168.4.1
 }
 
 void loop() {
-  // Listen for incoming Wi-Fi HTTP requests from the backend
-  server.handleClient();
+  // Repeats data request every 2 seconds without blocking the chip
+  if (millis() - lastFetchTime >= fetchInterval) {
+    lastFetchTime = millis();
+    fetchAndUpdateAlerts();
+  }
 }
