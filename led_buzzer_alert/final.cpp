@@ -2,84 +2,107 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 
-// --- CONFIGURATION & PINS ---
 const char *ssid = "FloodNode_OutputServer", *password = "12345678";
 
-// Backend endpoint to request data from (adjust IP/port if your backend uses a different one)
-const char* backendUrl = "http://192.168.4.2/get_rates"; 
+const char* urlTankA = "http://192.168.4.2/get_rate_a";
+const char* urlTankB = "http://192.168.4.2/get_rate_b";
+const char* urlTankC = "http://192.168.4.2/get_rate_c";
 
-// Pin layout for 3 tanks: {Green, Yellow, Red}
-const int TANK_PINS[3][3] = {
-  {12, 14, 27}, // Tank A (City 1)
-  {16, 17, 5},  // Tank B (City 2)
-  {18, 19, 21}  // Tank C (City 3)
-};
-#define BUZZER 26
+#define TANK_A_GREEN   12
+#define TANK_A_YELLOW  14
+#define TANK_A_RED     27
+
+#define TANK_B_GREEN   16
+#define TANK_B_YELLOW  17
+#define TANK_B_RED     5
+
+#define TANK_C_GREEN   18
+#define TANK_C_YELLOW  19
+#define TANK_C_RED     21
+
+#define BUZZER         26
 
 unsigned long lastFetchTime = 0;
-const long fetchInterval = 2000; // Request data every 2 seconds (2000ms)
+const long fetchInterval = 2000;
 
-// Updates LEDs for a single tank and checks if critical
-bool updateTank(int tankIndex, float rate) {
-  bool highRisk = (rate >= 1.5);
-  bool warning  = (rate >= 0.5 && !highRisk);
-
-  digitalWrite(TANK_PINS[tankIndex][0], (!highRisk && !warning) ? HIGH : LOW); // Green
-  digitalWrite(TANK_PINS[tankIndex][1], warning ? HIGH : LOW);                 // Yellow
-  digitalWrite(TANK_PINS[tankIndex][2], highRisk ? HIGH : LOW);                // Red
-
-  return highRisk;
+bool updateTankLights(int greenPin, int yellowPin, int redPin, float rateOfRise) {
+  if (rateOfRise >= 1.5) {
+    digitalWrite(greenPin, LOW);
+    digitalWrite(yellowPin, LOW);
+    digitalWrite(redPin, HIGH);
+    return true;
+  }
+  else if (rateOfRise >= 0.5) {
+    digitalWrite(greenPin, LOW);
+    digitalWrite(yellowPin, HIGH);
+    digitalWrite(redPin, LOW);
+    return false;
+  }
+  else {
+    digitalWrite(greenPin, HIGH);
+    digitalWrite(yellowPin, LOW);
+    digitalWrite(redPin, LOW);
+    return false;
+  }
 }
 
-// Request data from the backend and update alerts
-void fetchAndUpdateAlerts() {
-  if (WiFi.softAPgetStationNum() > 0) { // Check if backend ESP32 is connected to hotspot
+float fetchSingleRate(const char* url) {
+  float rate = 0.0;
+  if (WiFi.softAPgetStationNum() > 0) {
     HTTPClient http;
-    http.begin(backendUrl);
-    int httpCode = http.GET(); // Send HTTP GET request to backend
-
+    http.begin(url);
+    int httpCode = http.GET();
+    
     if (httpCode == HTTP_CODE_OK) {
-      String payload = http.getString(); // Expecting format: "0.2,0.8,1.8"
-      
-      // Parse rates for Tank A, B, and C
-      float rateA = payload.substring(0, payload.indexOf(',')).toFloat();
-      int firstComma = payload.indexOf(',');
-      int secondComma = payload.indexOf(',', firstComma + 1);
-      float rateB = payload.substring(firstComma + 1, secondComma).toFloat();
-      float rateC = payload.substring(secondComma + 1).toFloat();
-
-      // Update LEDs for all 3 tanks
-      bool criticalAlert = false;
-      if (updateTank(0, rateA)) criticalAlert = true;
-      if (updateTank(1, rateB)) criticalAlert = true;
-      if (updateTank(2, rateC)) criticalAlert = true;
-
-      // Trigger buzzer ONLY if at least one tank is almost flooded
-      if (criticalAlert) tone(BUZZER, 2000, 200); else noTone(BUZZER);
+      String payload = http.getString();
+      rate = payload.toFloat();
     }
     http.end();
+  }
+  return rate;
+}
+
+void processAllTanks() {
+  float rateA = fetchSingleRate(urlTankA);
+  float rateB = fetchSingleRate(urlTankB);
+  float rateC = fetchSingleRate(urlTankC);
+
+  bool isTankACritical = updateTankLights(TANK_A_GREEN, TANK_A_YELLOW, TANK_A_RED, rateA);
+  bool isTankBCritical = updateTankLights(TANK_B_GREEN, TANK_B_YELLOW, TANK_B_RED, rateB);
+  bool isTankCCritical = updateTankLights(TANK_C_GREEN, TANK_C_YELLOW, TANK_C_RED, rateC);
+
+  if (isTankACritical || isTankBCritical || isTankCCritical) {
+    tone(BUZZER, 2000, 200);
+  } else {
+    noTone(BUZZER);
   }
 }
 
 void setup() {
   Serial.begin(115200);
-  
-  // Initialize LED pins and Buzzer
-  for (int i = 0; i < 3; i++) {
-    for (int j = 0; j < 3; j++) pinMode(TANK_PINS[i][j], OUTPUT);
-  }
+
+  pinMode(TANK_A_GREEN, OUTPUT);
+  pinMode(TANK_A_YELLOW, OUTPUT);
+  pinMode(TANK_A_RED, OUTPUT);
+
+  pinMode(TANK_B_GREEN, OUTPUT);
+  pinMode(TANK_B_YELLOW, OUTPUT);
+  pinMode(TANK_B_RED, OUTPUT);
+
+  pinMode(TANK_C_GREEN, OUTPUT);
+  pinMode(TANK_C_YELLOW, OUTPUT);
+  pinMode(TANK_C_RED, OUTPUT);
+
   pinMode(BUZZER, OUTPUT);
 
-  // Start Soft AP (Hotspot)
   WiFi.softAP(ssid, password);
-  Serial.print("Hotspot Started. IP: ");
-  Serial.println(WiFi.softAPIP()); // Default: 192.168.4.1
+  Serial.print("Hotspot Running. IP: ");
+  Serial.println(WiFi.softAPIP());
 }
 
 void loop() {
-  // Repeats data request every 2 seconds without blocking the chip
   if (millis() - lastFetchTime >= fetchInterval) {
     lastFetchTime = millis();
-    fetchAndUpdateAlerts();
+    processAllTanks();
   }
 }
