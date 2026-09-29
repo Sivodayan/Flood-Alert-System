@@ -1,5 +1,5 @@
 /* =========================================================
-   CORE STATE & CONFIGURATION
+   CORE STATE and CONFIGURATION
    ========================================================= */
 const appState = {
   nodeHost: 'localhost:3000',
