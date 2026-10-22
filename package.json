@@ -1,0 +1,23 @@
+{
+  "name": "flood-alert-system",
+  "version": "1.0.0",
+  "description": "A special term project by Team Void Warriors - Flood Alert System with real-time monitoring and ML predictions",
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev": "node backend/server.js"
+  },
+  "keywords": [
+    "flood-alert",
+    "monitoring",
+    "iot",
+    "websocket"
+  ],
+  "author": "Team Void Warriors",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "ws": "^8.14.2",
+    "@vercel/analytics": "^1.1.1"
+  }
+}
