@@ -1,4 +1,5 @@
-
+// db.js
+// SQLite connection, schema, and prepared statements for flood sensor readings.
 
 const Database = require('better-sqlite3');
 
@@ -26,8 +27,10 @@ const getLatest = db.prepare(`
 `);
 
 const getHistory = db.prepare(`
-  SELECT sensor_id, water_level, recorded_at FROM readings
-  WHERE sensor_id = ? ORDER BY recorded_at ASC LIMIT ?
+  SELECT sensor_id, water_level, recorded_at FROM (
+    SELECT sensor_id, water_level, recorded_at FROM readings
+    WHERE sensor_id = ? ORDER BY recorded_at DESC LIMIT ?
+  ) ORDER BY recorded_at ASC
 `);
 
 module.exports = {

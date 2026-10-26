@@ -7,7 +7,7 @@ const cors = require('cors');
 const { createWebSocketServer } = require('./websocket');
 const routes = require('./routes');
 
-const PORT = 3000;
+const PORT = 8080;
 //use port 8001 for ml
 const app = express();
 app.use(cors());
