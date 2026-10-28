@@ -7,9 +7,9 @@ const appState = {
   sensorId: 'sensor_01',
 
   waterLevelCm: 0,
-  maxScaleCm: 70.0,            // Gauge scale maximum (cm)
-  alertThresholdCm: 35.0,      // Warning mark
-  dangerThresholdCm: 50.0,     // Danger mark matches ML service hardcoded limit
+  maxScaleCm: 30.0,            // Gauge scale maximum (cm)
+  alertThresholdCm: 8.0,      // Warning mark
+  dangerThresholdCm: 10.0,     // Danger mark matches ML service hardcoded limit
 
   riseRateCmMin: 0.0,
   surgeThresholdCmMin: 2.0,    // Configurable rise rate alert threshold (cm/min)
